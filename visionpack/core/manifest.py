@@ -40,7 +40,7 @@ class Manifest:
                 "coco": {"include_empty_images": True},
             },
             pack_profiles={
-                "archive": {"format": "tar", "include_metadata": True},
+                "archive": {"format": "tar.zst", "compression_level": 10, "include_metadata": True, "include_assets": True},
                 "training": {"format": "folder", "shard_size": 1024},
             },
             annotation={"preferred_tool": "cvat", "review_required": True},
@@ -54,13 +54,13 @@ class Manifest:
             name=str(data["name"]),
             version=int(data.get("version", 1)),
             task=str(data.get("task", "detection")),
-            classes=[ClassDef.from_dict(item) for item in data.get("classes", [])],
-            storage=dict(data.get("storage", {"mode": "content-addressed", "hash": "sha256"})),
-            validation=dict(data.get("validation", {})),
-            splits=dict(data.get("splits", {})),
-            exports=dict(data.get("exports", {})),
-            pack_profiles=dict(data.get("pack_profiles", {})),
-            annotation=dict(data.get("annotation", {})),
+            classes=[ClassDef.from_dict(item) for item in data.get("classes") or []],
+            storage=dict(data.get("storage") or {"mode": "content-addressed", "hash": "sha256"}),
+            validation=dict(data.get("validation") or {}),
+            splits=dict(data.get("splits") or {}),
+            exports=dict(data.get("exports") or {}),
+            pack_profiles=dict(data.get("pack_profiles") or {}),
+            annotation=dict(data.get("annotation") or {}),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -178,19 +178,25 @@ def _dump_yaml(data: dict[str, Any], indent: int = 0) -> str:
     pad = " " * indent
     for key, value in data.items():
         if isinstance(value, dict):
-            lines.append(f"{pad}{key}:")
-            lines.append(_dump_yaml(value, indent + 2).rstrip())
+            if value:
+                lines.append(f"{pad}{key}:")
+                lines.append(_dump_yaml(value, indent + 2).rstrip())
+            else:
+                lines.append(f"{pad}{key}: {{}}")
         elif isinstance(value, list):
-            lines.append(f"{pad}{key}:")
-            for item in value:
-                if isinstance(item, dict):
-                    first = True
-                    for child_key, child_value in item.items():
-                        prefix = "- " if first else "  "
-                        lines.append(f"{pad}  {prefix}{child_key}: {_format_scalar(child_value)}")
-                        first = False
-                else:
-                    lines.append(f"{pad}  - {_format_scalar(item)}")
+            if value:
+                lines.append(f"{pad}{key}:")
+                for item in value:
+                    if isinstance(item, dict):
+                        first = True
+                        for child_key, child_value in item.items():
+                            prefix = "- " if first else "  "
+                            lines.append(f"{pad}  {prefix}{child_key}: {_format_scalar(child_value)}")
+                            first = False
+                    else:
+                        lines.append(f"{pad}  - {_format_scalar(item)}")
+            else:
+                lines.append(f"{pad}{key}: []")
         else:
             lines.append(f"{pad}{key}: {_format_scalar(value)}")
     return "\n".join(lines) + "\n"

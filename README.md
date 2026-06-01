@@ -13,6 +13,7 @@ vp snapshot create -m "initial import"
 vp snapshot list
 vp diff v1 v2
 vp export --format yolo --output exports/yolo-v1
+vp pack --profile archive
 ```
 
 Funcionalidades implementadas neste ciclo:
@@ -27,9 +28,11 @@ Funcionalidades implementadas neste ciclo:
 - snapshots locais versionados
 - diff entre snapshots
 - export YOLO
+- archive packing em `.tar.zst`
+- dependencias gerenciadas por `uv`
 - testes cobrindo o fluxo principal
 
-Ainda estao como scaffold: `vp pack` e `vp annotate`. Os proximos passos naturais sao trocar o indice JSON por DuckDB, adicionar COCO import/export e implementar `pack --profile archive`.
+Ainda esta como scaffold: `vp annotate`. Os proximos passos naturais sao trocar o indice JSON por DuckDB, adicionar COCO import/export e implementar `pack --profile training`.
 
 ## 1. Objetivo
 

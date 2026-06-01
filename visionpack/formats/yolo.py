@@ -139,7 +139,7 @@ def export_yolo(project: Project, output: Path) -> dict[str, int]:
 def _parse_yolo_label(path: Path, width: int, height: int, project: Project) -> list[ObjectAnnotation]:
     objects: list[ObjectAnnotation] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        stripped = line.strip()
+        stripped = _clean_label_line(line)
         if not stripped:
             continue
         parts = stripped.split()
@@ -217,7 +217,7 @@ def _infer_class_names_from_labels(label_files: list[Path]) -> list[str]:
     max_class = -1
     for path in label_files:
         for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
+            stripped = _clean_label_line(line)
             if not stripped:
                 continue
             try:
@@ -225,6 +225,10 @@ def _infer_class_names_from_labels(label_files: list[Path]) -> list[str]:
             except (ValueError, IndexError):
                 continue
     return [f"class_{idx}" for idx in range(max_class + 1)]
+
+
+def _clean_label_line(line: str) -> str:
+    return line.strip().lstrip("\ufeff")
 
 
 def _fmt(value: float) -> str:

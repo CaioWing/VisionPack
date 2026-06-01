@@ -4,7 +4,16 @@ version = "0.1.0"
 description = "DatasetOps for computer vision datasets"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "duckdb>=1.5.3",
+    "orjson>=3.11.9",
+    "pillow>=12.2.0",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "typer>=0.26.4",
+    "zstandard>=0.25.0",
+]
 
 [project.scripts]
 vp = "visionpack.cli.main:main"
