@@ -1,0 +1,18 @@
+[project]
+name = "visionpack"
+version = "0.1.0"
+description = "DatasetOps for computer vision datasets"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+vp = "visionpack.cli.main:main"
+visionpack = "visionpack.cli.main:main"
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["visionpack*"]
