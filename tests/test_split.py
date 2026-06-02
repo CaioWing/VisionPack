@@ -8,7 +8,8 @@ from PIL import Image
 
 from visionpack.core.errors import VisionPackError
 from visionpack.core.project import Project
-from visionpack.formats.yolo import YoloImporter
+from visionpack.formats.coco import export_coco
+from visionpack.formats.yolo import YoloImporter, export_yolo
 from visionpack.split import create_split, lock_split
 from visionpack.stats import split_breakdown
 
@@ -95,6 +96,43 @@ class SplitTest(unittest.TestCase):
             # Every originally-assigned asset keeps its set membership.
             for asset_id, set_name in assignment_before.items():
                 self.assertEqual(assignment_after[asset_id], set_name)
+
+    def test_yolo_export_is_split_aware(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _twenty_balanced(root)
+            create_split(Project.open(root), strategy="stratified")
+            output = root / "exports" / "yolo"
+            summary = export_yolo(Project.open(root), output, split_id="default")
+
+            self.assertEqual(summary["sets"], {"train": 16, "val": 2, "test": 2})
+            for set_name, count in (("train", 16), ("val", 2), ("test", 2)):
+                self.assertEqual(len(list((output / "images" / set_name).glob("*.png"))), count)
+                self.assertEqual(len(list((output / "labels" / set_name).glob("*.txt"))), count)
+            data_yaml = (output / "data.yaml").read_text(encoding="utf-8")
+            self.assertIn("train: images/train", data_yaml)
+            self.assertIn("val: images/val", data_yaml)
+            self.assertIn("test: images/test", data_yaml)
+
+    def test_coco_export_writes_per_split_instances(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _twenty_balanced(root)
+            create_split(Project.open(root), strategy="stratified")
+            output = root / "exports" / "coco"
+            summary = export_coco(Project.open(root), output, split_id="default")
+
+            self.assertEqual(summary["sets"], {"train": 16, "val": 2, "test": 2})
+            for set_name in ("train", "val", "test"):
+                self.assertTrue((output / "annotations" / f"instances_{set_name}.json").exists())
+                self.assertTrue((output / "images" / set_name).is_dir())
+
+    def test_export_with_unknown_split_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _twenty_balanced(root)
+            with self.assertRaises(VisionPackError):
+                export_yolo(Project.open(root), root / "out", split_id="nope")
 
     def test_lock_prevents_overwrite_without_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

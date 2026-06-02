@@ -4,12 +4,14 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from visionpack.core.errors import FormatError
 from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary
 from visionpack.media import is_image_path, image_info_from_bytes
+from visionpack.split import resolve_export_sets
 from visionpack.storage.hash import sha256_bytes
 from visionpack.storage.object_store import CopyMode
 
@@ -113,25 +115,41 @@ class YoloImporter:
         return _ProcessedImage(asset=asset, annotation=annotation, object_count=object_count, label_path=label_path)
 
 
-def export_yolo(project: Project, output: Path) -> dict[str, int]:
-    output = output.resolve()
-    images_dir = output / "images"
-    labels_dir = output / "labels"
-    images_dir.mkdir(parents=True, exist_ok=True)
-    labels_dir.mkdir(parents=True, exist_ok=True)
+def export_yolo(project: Project, output: Path, split_id: str | None = None) -> dict[str, Any]:
+    """Export to the YOLO layout.
 
+    Without ``split_id`` everything goes to flat ``images/`` and ``labels/``
+    directories. With a split, images and labels are written under
+    ``images/<set>/`` and ``labels/<set>/`` and ``data.yaml`` points each of
+    train/val/test at its set, which is what trainers (e.g. Ultralytics) expect.
+    """
+    output = output.resolve()
     classes = project.manifest.classes
     class_index = {item.id: idx for idx, item in enumerate(classes)}
+
+    set_for_asset, set_names = resolve_export_sets(project, split_id)
+
     exported_images = 0
     exported_labels = 0
     exported_objects = 0
+    per_set: dict[str, int] = {name: 0 for name in set_names}
+    skipped = 0
 
     for asset in project.index.assets():
+        set_name = set_for_asset(asset.id)
+        if set_name is None:
+            skipped += 1
+            continue
+        images_dir = output / "images" / set_name if split_id else output / "images"
+        labels_dir = output / "labels" / set_name if split_id else output / "labels"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        labels_dir.mkdir(parents=True, exist_ok=True)
+
         source = asset.resolved_path(project.root)
         suffix = Path(asset.original_path).suffix or f".{asset.format}"
-        image_name = f"{asset.id}{suffix.lower()}"
-        shutil.copy2(source, images_dir / image_name)
+        shutil.copy2(source, images_dir / f"{asset.id}{suffix.lower()}")
         exported_images += 1
+        per_set[set_name] = per_set.get(set_name, 0) + 1
 
         annotation = project.index.annotation_for_asset(asset.id)
         lines: list[str] = []
@@ -151,16 +169,28 @@ def export_yolo(project: Project, output: Path) -> dict[str, int]:
         (labels_dir / f"{asset.id}.txt").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
         exported_labels += 1
 
+    output.mkdir(parents=True, exist_ok=True)
     (output / "classes.txt").write_text("\n".join(item.name for item in classes) + ("\n" if classes else ""), encoding="utf-8")
-    (output / "data.yaml").write_text(
-        "path: .\n"
-        "train: images\n"
-        "val: images\n"
-        f"nc: {len(classes)}\n"
-        f"names: {[item.name for item in classes]!r}\n",
-        encoding="utf-8",
-    )
-    return {"images": exported_images, "labels": exported_labels, "objects": exported_objects}
+    (output / "data.yaml").write_text(_render_data_yaml(classes, split_id, set_names), encoding="utf-8")
+
+    result: dict[str, Any] = {"images": exported_images, "labels": exported_labels, "objects": exported_objects}
+    if split_id:
+        result["sets"] = per_set
+        result["skipped"] = skipped
+    return result
+
+
+def _render_data_yaml(classes: list[Any], split_id: str | None, set_names: list[str]) -> str:
+    if split_id:
+        lines = ["path: ."]
+        for name in ("train", "val", "test"):
+            if name in set_names:
+                lines.append(f"{name}: images/{name}")
+    else:
+        lines = ["path: .", "train: images", "val: images"]
+    lines.append(f"nc: {len(classes)}")
+    lines.append(f"names: {[item.name for item in classes]!r}")
+    return "\n".join(lines) + "\n"
 
 
 def _parse_yolo_label(path: Path, width: int, height: int, index_to_class_id: dict[int, str]) -> list[ObjectAnnotation]:

@@ -14,6 +14,7 @@ from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, ut
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary
 from visionpack.media import image_info_from_bytes
+from visionpack.split import resolve_export_sets
 from visionpack.storage.hash import sha256_bytes
 from visionpack.storage.object_store import CopyMode
 
@@ -146,33 +147,44 @@ class CocoImporter:
         return _ProcessedImage(asset=asset, annotation=annotation, object_count=len(objects))
 
 
-def export_coco(project: Project, output: Path) -> dict[str, int]:
-    output = output.resolve()
-    images_dir = output / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
+def export_coco(project: Project, output: Path, split_id: str | None = None) -> dict[str, Any]:
+    """Export to COCO instances JSON.
 
+    Without ``split_id`` a single ``annotations.json`` plus a flat ``images/``
+    directory is written. With a split, images go to ``images/<set>/`` and each
+    set gets its own ``annotations/instances_<set>.json``.
+    """
+    output = output.resolve()
     classes = project.manifest.classes
     # COCO category ids are 1-based by convention.
     class_to_category = {item.id: index + 1 for index, item in enumerate(classes)}
     categories = [{"id": index + 1, "name": item.name, "supercategory": ""} for index, item in enumerate(classes)]
 
-    images: list[dict[str, Any]] = []
-    annotations: list[dict[str, Any]] = []
-    annotation_id = 1
-    exported_objects = 0
+    set_for_asset, _ = resolve_export_sets(project, split_id)
 
-    for image_id, asset in enumerate(project.index.assets(), start=1):
+    # Accumulate images/annotations per set; flat export uses a single bucket.
+    buckets: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: {"images": [], "annotations": []})
+    next_image_id: dict[str, int] = defaultdict(lambda: 1)
+    next_annotation_id: dict[str, int] = defaultdict(lambda: 1)
+    exported_objects = 0
+    skipped = 0
+
+    for asset in project.index.assets():
+        set_name = set_for_asset(asset.id)
+        if set_name is None:
+            skipped += 1
+            continue
+        images_dir = output / "images" / set_name if split_id else output / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
         source = asset.resolved_path(project.root)
         suffix = Path(asset.original_path).suffix.lower() or f".{asset.format}"
         file_name = f"{asset.id}{suffix}"
         shutil.copy2(source, images_dir / file_name)
-        images.append(
-            {
-                "id": image_id,
-                "file_name": file_name,
-                "width": asset.width,
-                "height": asset.height,
-            }
+
+        image_id = next_image_id[set_name]
+        next_image_id[set_name] += 1
+        buckets[set_name]["images"].append(
+            {"id": image_id, "file_name": file_name, "width": asset.width, "height": asset.height}
         )
 
         annotation = project.index.annotation_for_asset(asset.id)
@@ -182,9 +194,9 @@ def export_coco(project: Project, output: Path) -> dict[str, int]:
             if obj.class_id not in class_to_category:
                 continue
             bbox = obj.bbox
-            annotations.append(
+            buckets[set_name]["annotations"].append(
                 {
-                    "id": annotation_id,
+                    "id": next_annotation_id[set_name],
                     "image_id": image_id,
                     "category_id": class_to_category[obj.class_id],
                     "bbox": [bbox.x, bbox.y, bbox.width, bbox.height],
@@ -192,17 +204,35 @@ def export_coco(project: Project, output: Path) -> dict[str, int]:
                     "iscrowd": int(obj.attributes.get("iscrowd", 0)),
                 }
             )
-            annotation_id += 1
+            next_annotation_id[set_name] += 1
             exported_objects += 1
 
-    document = {
-        "info": {"description": project.manifest.name, "date_created": utc_now()},
-        "images": images,
-        "annotations": annotations,
-        "categories": categories,
-    }
-    (output / "annotations.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
-    return {"images": len(images), "annotations": len(annotations), "objects": exported_objects}
+    total_images = 0
+    total_annotations = 0
+    per_set: dict[str, int] = {}
+    output.mkdir(parents=True, exist_ok=True)
+    for set_name, content in buckets.items():
+        document = {
+            "info": {"description": project.manifest.name, "date_created": utc_now()},
+            "images": content["images"],
+            "annotations": content["annotations"],
+            "categories": categories,
+        }
+        if split_id:
+            annotations_dir = output / "annotations"
+            annotations_dir.mkdir(parents=True, exist_ok=True)
+            (annotations_dir / f"instances_{set_name}.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        else:
+            (output / "annotations.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+        total_images += len(content["images"])
+        total_annotations += len(content["annotations"])
+        per_set[set_name] = len(content["images"])
+
+    result: dict[str, Any] = {"images": total_images, "annotations": total_annotations, "objects": exported_objects}
+    if split_id:
+        result["sets"] = per_set
+        result["skipped"] = skipped
+    return result
 
 
 def _load_coco(path: Path) -> dict[str, Any]:

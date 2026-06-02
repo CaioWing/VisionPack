@@ -21,6 +21,7 @@ vp snapshot create -m "initial import"
 vp snapshot list
 vp diff v1 v2
 vp export --format yolo --output exports/yolo-v1
+vp export --format yolo --output exports/yolo-train --split
 vp export --format coco --output exports/coco-v1
 vp pack --profile archive
 ```
@@ -38,6 +39,7 @@ Implemented:
 - multi-source merging: classes from different sources merge by name (YOLO labels mapped via the source's own class order, not positionally)
 - deterministic, versionable train/val/test splits (stratified / random / hash strategies, seeded, lockable, captured in snapshots)
 - per-split statistics for comparable metrics as the dataset grows
+- split-aware YOLO and COCO export producing ready-to-train train/val/test layouts
 - validation for unreadable images, missing annotations, orphan labels, unknown classes, invalid bounding boxes, duplicate content, and split leakage
 - dataset statistics
 - content-addressed local snapshots (deduplicated inventory blobs) with manifest, asset, annotation, split, and stats hashes
@@ -80,6 +82,9 @@ Make the core correct and able to handle the README's own target scale
       content-hash + seed assignment; `stratified` (default), `random` (exact ratios),
       `hash` (stable as data grows); lock freezes a split and snapshots capture it (`split.py`)
 - [x] per-split stats for comparable metrics (`vp stats --by split`) + deterministic ordering
+- [x] split-aware export: `vp export --format yolo|coco --split` emits a ready-to-train
+      layout (YOLO `images/<set>` + `labels/<set>` + `data.yaml`; COCO `images/<set>` +
+      `annotations/instances_<set>.json`) (`formats/`, `split.py`)
 - [ ] implement `vp pack --profile training` (WebDataset shards)
 - [ ] DuckDB index — **deferred by decision**: at current scale the cached lists are
       fine, and DuckDB's payoff (SQL aggregations/joins, scale past RAM) is pulled by

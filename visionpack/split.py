@@ -79,6 +79,34 @@ def create_split(
     return split
 
 
+def get_split(project: Project, split_id: str = "default") -> Split | None:
+    return next((item for item in project.index.splits() if item.id == split_id), None)
+
+
+def asset_set_map(split: Split) -> dict[str, str]:
+    """Map each asset id to the name of the set it belongs to."""
+    return {asset_id: set_name for set_name, asset_ids in split.sets.items() for asset_id in asset_ids}
+
+
+def resolve_export_sets(project: Project, split_id: str | None):
+    """Resolve how an export should partition assets.
+
+    Returns ``(set_for_asset, ordered_set_names)`` where ``set_for_asset(asset_id)``
+    gives the set an asset belongs to (or ``None`` to skip it). With ``split_id``
+    of ``None`` every asset maps to a single bucket, so callers can treat flat and
+    split exports uniformly. Set names are ordered train, val, test first.
+    """
+    if split_id is None:
+        return (lambda asset_id: "all"), []
+    split = get_split(project, split_id)
+    if split is None:
+        raise VisionPackError(f"No split named {split_id!r}. Create one with `vp split create`.")
+    membership = asset_set_map(split)
+    ordered = [name for name in _SET_ORDER if name in split.sets]
+    ordered += [name for name in split.sets if name not in _SET_ORDER]
+    return (lambda asset_id: membership.get(asset_id)), ordered
+
+
 def lock_split(project: Project, split_id: str = "default") -> Split:
     existing = {item.id: item for item in project.index.splits()}
     split = existing.get(split_id)
