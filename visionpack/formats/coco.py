@@ -44,7 +44,7 @@ class CocoImporter:
         categories = {int(cat["id"]): str(cat.get("name", cat["id"])) for cat in document.get("categories", [])}
         # Preserve category order as declared in the file when seeding classes.
         category_names = [categories[cat_id] for cat_id in categories]
-        classes_added = int(self.project.manifest.ensure_classes(category_names))
+        classes_added = self.project.manifest.merge_classes(category_names)
         name_to_class_id = {item.name: item.id for item in self.project.manifest.classes}
         category_to_class_id = {
             cat_id: name_to_class_id.get(name, class_id_from_name(name)) for cat_id, name in categories.items()

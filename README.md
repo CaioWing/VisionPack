@@ -14,6 +14,9 @@ vp import ./raw --format yolo
 vp import ./coco.json --format coco --images ./images
 vp validate --strict
 vp stats
+vp stats --by split
+vp split create --train 0.8 --val 0.1 --test 0.1 --strategy stratified
+vp split lock
 vp snapshot create -m "initial import"
 vp snapshot list
 vp diff v1 v2
@@ -32,6 +35,9 @@ Implemented:
 - robust image probing via Pillow (webp/EXIF-orientation correct), reading each file once for hash + probe + store
 - YOLO detection import (parallelized) with image hashing, class discovery, normalized label parsing, and internal bounding-box conversion
 - COCO detection import and export (instances JSON)
+- multi-source merging: classes from different sources merge by name (YOLO labels mapped via the source's own class order, not positionally)
+- deterministic, versionable train/val/test splits (stratified / random / hash strategies, seeded, lockable, captured in snapshots)
+- per-split statistics for comparable metrics as the dataset grows
 - validation for unreadable images, missing annotations, orphan labels, unknown classes, invalid bounding boxes, duplicate content, and split leakage
 - dataset statistics
 - content-addressed local snapshots (deduplicated inventory blobs) with manifest, asset, annotation, split, and stats hashes
@@ -67,7 +73,13 @@ Make the core correct and able to handle the README's own target scale
       `load_snapshot` rehydrates it transparently (`snapshot.py`), packed in archives
 - [x] implement COCO import (`vp import coco.json --format coco --images ./images`)
 - [x] implement COCO export (`vp export --format coco`)
-- [ ] implement split creation and locking commands
+- [x] multi-source class merging: YOLO labels map via the source's own class names
+      and unseen classes merge into the manifest by name (no more positional
+      mislabeling); COCO categories merge on re-import (`core/manifest.py`, `formats/`)
+- [x] deterministic, versionable splits (`vp split create/lock/list/show`):
+      content-hash + seed assignment; `stratified` (default), `random` (exact ratios),
+      `hash` (stable as data grows); lock freezes a split and snapshots capture it (`split.py`)
+- [x] per-split stats for comparable metrics (`vp stats --by split`) + deterministic ordering
 - [ ] implement `vp pack --profile training` (WebDataset shards)
 - [ ] DuckDB index — **deferred by decision**: at current scale the cached lists are
       fine, and DuckDB's payoff (SQL aggregations/joins, scale past RAM) is pulled by

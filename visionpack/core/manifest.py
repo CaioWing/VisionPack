@@ -120,16 +120,36 @@ class Manifest:
     def class_ids(self) -> set[str]:
         return {item.id for item in self.classes}
 
-    def ensure_classes(self, class_names: list[str]) -> bool:
-        if self.classes:
-            return False
-        self.classes = [ClassDef(id=class_id_from_name(name), name=name) for name in class_names]
-        return True
+    def merge_classes(self, class_names: list[str]) -> int:
+        """Add any classes not already present (matched by name), returning the count added.
 
-    def class_id_for_index(self, index: int) -> str:
-        if 0 <= index < len(self.classes):
-            return self.classes[index].id
-        return f"class_{index}"
+        Used by importers so datasets from different sources merge into one class
+        set by *name* rather than by positional index. Slug collisions (e.g.
+        ``Dog`` vs ``dog``) are disambiguated with a numeric suffix.
+        """
+        existing_names = {item.name for item in self.classes}
+        existing_ids = {item.id for item in self.classes}
+        added = 0
+        for name in class_names:
+            if name in existing_names:
+                continue
+            base_id = class_id_from_name(name)
+            class_id = base_id
+            suffix = 2
+            while class_id in existing_ids:
+                class_id = f"{base_id}_{suffix}"
+                suffix += 1
+            self.classes.append(ClassDef(id=class_id, name=name))
+            existing_names.add(name)
+            existing_ids.add(class_id)
+            added += 1
+        return added
+
+    def class_id_for_name(self, name: str) -> str | None:
+        for item in self.classes:
+            if item.name == name:
+                return item.id
+        return None
 
 
 def read_manifest(path: Path) -> Manifest:

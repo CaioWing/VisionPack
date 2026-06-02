@@ -4,7 +4,7 @@ import argparse
 import json
 
 from visionpack.core.project import Project
-from visionpack.stats import collect_stats
+from visionpack.stats import collect_stats, split_breakdown
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -24,6 +24,18 @@ def run(args: argparse.Namespace) -> int:
     if args.by == "class":
         for class_id, count in stats["class_distribution"].items():
             print(f"{class_id}: {count}")
+        return 0
+    if args.by == "split":
+        breakdown = split_breakdown(project)
+        if breakdown is None:
+            print("No split named 'default'. Create one with: vp split create")
+            return 0
+        lock = " [locked]" if breakdown["locked"] else ""
+        print(f"Split 'default' (strategy={breakdown['strategy']}){lock}")
+        for set_name, info in breakdown["sets"].items():
+            print(f"{set_name}: {info['images']} images, {info['objects']} objects")
+            for class_id, count in info["class_distribution"].items():
+                print(f"  {class_id}: {count}")
         return 0
     print(f"Images: {stats['assets']}")
     print(f"Annotations: {stats['annotations']}")

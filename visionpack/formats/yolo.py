@@ -34,8 +34,12 @@ class YoloImporter:
         image_root = self.source if self.source.is_dir() else self.source.parent
         images = sorted(path for path in image_root.rglob("*") if path.is_file() and is_image_path(path))
         label_files = sorted(path for path in image_root.rglob("*.txt") if _looks_like_label_file(path))
-        class_names = _discover_class_names(image_root) or _infer_class_names_from_labels(label_files)
-        classes_added = int(self.project.manifest.ensure_classes(class_names))
+        source_class_names = _discover_class_names(image_root) or _infer_class_names_from_labels(label_files)
+        classes_added = self.project.manifest.merge_classes(source_class_names)
+        # Map this source's label indices to manifest class ids *by name*, so a
+        # second source whose classes are in a different order is not mislabeled.
+        name_to_id = {item.name: item.id for item in self.project.manifest.classes}
+        self._index_to_class_id = {index: name_to_id[name] for index, name in enumerate(source_class_names)}
         matched_label_files: set[Path] = set()
         summary = ImportSummary(classes_added=classes_added)
 
@@ -96,7 +100,7 @@ class YoloImporter:
         annotation: Annotation | None = None
         object_count = 0
         if label_path is not None:
-            objects = _parse_yolo_label(label_path, width, height, self.project)
+            objects = _parse_yolo_label(label_path, width, height, self._index_to_class_id)
             object_count = len(objects)
             annotation = Annotation(
                 id=f"ann_{asset_id}",
@@ -159,7 +163,7 @@ def export_yolo(project: Project, output: Path) -> dict[str, int]:
     return {"images": exported_images, "labels": exported_labels, "objects": exported_objects}
 
 
-def _parse_yolo_label(path: Path, width: int, height: int, project: Project) -> list[ObjectAnnotation]:
+def _parse_yolo_label(path: Path, width: int, height: int, index_to_class_id: dict[int, str]) -> list[ObjectAnnotation]:
     objects: list[ObjectAnnotation] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         stripped = _clean_label_line(line)
@@ -179,7 +183,7 @@ def _parse_yolo_label(path: Path, width: int, height: int, project: Project) -> 
         y = y_center * height - abs_height / 2
         objects.append(
             ObjectAnnotation(
-                class_id=project.manifest.class_id_for_index(class_index),
+                class_id=index_to_class_id.get(class_index, f"class_{class_index}"),
                 bbox=BBox(x=x, y=y, width=abs_width, height=abs_height),
             )
         )
