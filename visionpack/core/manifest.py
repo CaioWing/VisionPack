@@ -123,7 +123,7 @@ class Manifest:
     def ensure_classes(self, class_names: list[str]) -> bool:
         if self.classes:
             return False
-        self.classes = [ClassDef(id=_class_id(name), name=name) for name in class_names]
+        self.classes = [ClassDef(id=class_id_from_name(name), name=name) for name in class_names]
         return True
 
     def class_id_for_index(self, index: int) -> str:
@@ -152,7 +152,7 @@ def _format_validation_error(exc: ValidationError) -> str:
     return "\n".join(lines)
 
 
-def _class_id(name: str) -> str:
+def class_id_from_name(name: str) -> str:
     clean = "".join(ch.lower() if ch.isalnum() else "_" for ch in name.strip())
     clean = "_".join(part for part in clean.split("_") if part)
     return clean or "class"

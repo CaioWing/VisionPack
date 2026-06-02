@@ -57,6 +57,10 @@ def pack_archive(project: Project, output: Path | None = None, profile_name: str
         if include_metadata:
             for snapshot_path in sorted((project.root / ".vp" / "snapshots").glob("*.json")):
                 files += _add_path(tar, snapshot_path, f".vp/snapshots/{snapshot_path.name}")
+            # Snapshot inventories are stored as content-addressed blobs; pack
+            # them so archived snapshots stay self-contained.
+            for blob_path in sorted((project.root / ".vp" / "snapshots" / "blobs").glob("*.json")):
+                files += _add_path(tar, blob_path, f".vp/snapshots/blobs/{blob_path.name}")
 
         if include_assets:
             seen_assets: set[str] = set()

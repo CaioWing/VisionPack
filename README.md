@@ -11,12 +11,14 @@ For practical usage, see [docs/usage.md](docs/usage.md).
 ```bash
 vp init --name factory-defects --task detection
 vp import ./raw --format yolo
+vp import ./coco.json --format coco --images ./images
 vp validate --strict
 vp stats
 vp snapshot create -m "initial import"
 vp snapshot list
 vp diff v1 v2
 vp export --format yolo --output exports/yolo-v1
+vp export --format coco --output exports/coco-v1
 vp pack --profile archive
 ```
 
@@ -24,17 +26,19 @@ Implemented:
 
 - Python package structure split across CLI, core, storage, index, formats, validation, packing, and tests
 - `uv` dependency management with `uv.lock`
-- `visionpack.yaml` manifest creation and parsing
+- `visionpack.yaml` manifest creation and `pydantic`-validated parsing with actionable schema errors
 - local content-addressed asset store under `.vp/objects/sha256`
-- JSON local index under `.vp/db/index.json`, with an interface that can later be replaced by DuckDB
-- YOLO detection import with image hashing, class discovery, normalized label parsing, and internal bounding-box conversion
+- JSON local index under `.vp/db/index.json` with cached, O(1) annotation lookups (DuckDB-ready interface)
+- robust image probing via Pillow (webp/EXIF-orientation correct), reading each file once for hash + probe + store
+- YOLO detection import (parallelized) with image hashing, class discovery, normalized label parsing, and internal bounding-box conversion
+- COCO detection import and export (instances JSON)
 - validation for unreadable images, missing annotations, orphan labels, unknown classes, invalid bounding boxes, duplicate content, and split leakage
 - dataset statistics
-- local snapshots with manifest, asset, annotation, split, and stats hashes
+- content-addressed local snapshots (deduplicated inventory blobs) with manifest, asset, annotation, split, and stats hashes
 - diff between snapshots
-- YOLO export
+- YOLO and COCO export
 - archive packing to `.tar.zst`
-- integration tests for the main YOLO flow
+- integration tests for the YOLO and COCO flows, plus media, manifest, and snapshot units
 
 ### Roadmap
 
@@ -58,15 +62,17 @@ Make the core correct and able to handle the README's own target scale
 
 #### Phase A — Scale & format coverage
 
-- [ ] replace the JSON index implementation with DuckDB while preserving the existing
-      `JsonIndex`-style interface; design queries (`assets_by_split`,
-      `annotation_for_asset`, `class_counts`) as SQL
-- [ ] content-address snapshots: store inventory as a blob in `.vp/objects` and have
-      snapshots reference its hash (stop embedding the full inventory per snapshot)
-- [ ] implement COCO import
-- [ ] implement COCO export
+- [x] content-address snapshots: store the inventory as a deduplicated blob under
+      `.vp/snapshots/blobs/<hash>.json`; `vN.json` references `inventory_hash` and
+      `load_snapshot` rehydrates it transparently (`snapshot.py`), packed in archives
+- [x] implement COCO import (`vp import coco.json --format coco --images ./images`)
+- [x] implement COCO export (`vp export --format coco`)
 - [ ] implement split creation and locking commands
 - [ ] implement `vp pack --profile training` (WebDataset shards)
+- [ ] DuckDB index — **deferred by decision**: at current scale the cached lists are
+      fine, and DuckDB's payoff (SQL aggregations/joins, scale past RAM) is pulled by
+      Phase B. When built, use an in-memory DuckDB query layer over the portable JSON
+      store (no binary index file, no file-lock issues), driven by a real Phase B query.
 
 #### Phase B — Differentiators (what makes it essential)
 

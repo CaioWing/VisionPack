@@ -3,14 +3,17 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from visionpack.core.errors import VisionPackError
 from visionpack.core.project import Project
+from visionpack.formats.coco import CocoImporter
 from visionpack.formats.yolo import YoloImporter
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("import", help="Import a dataset")
-    parser.add_argument("source", help="Input dataset path")
-    parser.add_argument("--format", required=True, choices=["yolo"], help="Input format")
+    parser.add_argument("source", help="Input dataset path (YOLO root, or COCO annotation JSON)")
+    parser.add_argument("--format", required=True, choices=["yolo", "coco"], help="Input format")
+    parser.add_argument("--images", help="Image directory (required for --format coco)")
     parser.add_argument("--task", default=None, choices=["detection"], help="Override project task")
     parser.add_argument("--copy", default="ingest", choices=["copy", "move", "hardlink", "reference", "ingest"], help="Asset copy mode")
     parser.add_argument("--class-map", help="Reserved for explicit class mapping files")
@@ -22,9 +25,18 @@ def run(args: argparse.Namespace) -> int:
     if args.task and project.manifest.task != args.task:
         project.manifest.task = args.task
         project.save_manifest()
-    summary = YoloImporter(project, Path(args.source), copy_mode=args.copy).run()
+
+    if args.format == "coco":
+        if not args.images:
+            raise VisionPackError("--images is required when importing COCO (the directory holding the image files)")
+        summary = CocoImporter(project, Path(args.source), Path(args.images), copy_mode=args.copy).run()
+        label = "COCO"
+    else:
+        summary = YoloImporter(project, Path(args.source), copy_mode=args.copy).run()
+        label = "YOLO"
+
     print(
-        "Imported YOLO dataset: "
+        f"Imported {label} dataset: "
         f"{summary.assets} assets, {summary.annotations} annotations, {summary.objects} objects"
     )
     if summary.orphan_labels:
