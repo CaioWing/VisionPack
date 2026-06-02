@@ -16,7 +16,7 @@ class ObjectStore:
     def object_path(self, sha256: str) -> Path:
         return self.objects_root / sha256[:2] / sha256[2:4] / sha256
 
-    def store(self, source: Path, sha256: str, mode: CopyMode = "ingest") -> str:
+    def store(self, source: Path, sha256: str, mode: CopyMode = "ingest", data: bytes | None = None) -> str:
         if mode == "reference":
             return str(source.resolve())
 
@@ -31,9 +31,19 @@ class ObjectStore:
             try:
                 os.link(source, destination)
             except OSError:
-                shutil.copy2(source, destination)
+                self._write(destination, source, data)
         elif mode == "move":
             shutil.move(str(source), str(destination))
+        else:  # copy / ingest
+            self._write(destination, source, data)
+        return str(destination.relative_to(self.root))
+
+    @staticmethod
+    def _write(destination: Path, source: Path, data: bytes | None) -> None:
+        # Objects in the store are immutable and identified by content hash, so
+        # we don't need copy2's metadata preservation; reuse in-memory bytes when
+        # the caller already read them (e.g. for hashing) to avoid a second read.
+        if data is not None:
+            destination.write_bytes(data)
         else:
             shutil.copy2(source, destination)
-        return str(destination.relative_to(self.root))

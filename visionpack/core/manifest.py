@@ -5,8 +5,41 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from visionpack.core.errors import ManifestError
 from visionpack.core.models import ClassDef
+
+
+class _ClassDefModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str | None = None
+
+
+class _ManifestModel(BaseModel):
+    """Validation schema for ``visionpack.yaml``.
+
+    Kept separate from the :class:`Manifest` dataclass so the rest of the
+    codebase keeps using the dataclass, while parsing gets pydantic's precise,
+    field-level error messages. ``extra="forbid"`` turns typos in top-level keys
+    (e.g. ``validaton:``) into actionable errors instead of silently-ignored
+    config.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    version: int = 1
+    task: str = "detection"
+    classes: list[_ClassDefModel] = Field(default_factory=list)
+    storage: dict[str, Any] = Field(default_factory=lambda: {"mode": "content-addressed", "hash": "sha256"})
+    validation: dict[str, Any] = Field(default_factory=dict)
+    splits: dict[str, Any] = Field(default_factory=dict)
+    exports: dict[str, Any] = Field(default_factory=dict)
+    pack_profiles: dict[str, Any] = Field(default_factory=dict)
+    annotation: dict[str, Any] = Field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -48,19 +81,25 @@ class Manifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Manifest":
-        if "name" not in data:
-            raise ManifestError("visionpack.yaml is missing required field: name")
+        # Drop explicit nulls so that, like the previous hand-rolled parser, an
+        # empty section (e.g. ``classes:`` with no value) falls back to its
+        # default instead of failing type validation.
+        cleaned = {key: value for key, value in data.items() if value is not None}
+        try:
+            model = _ManifestModel.model_validate(cleaned)
+        except ValidationError as exc:
+            raise ManifestError(_format_validation_error(exc)) from exc
         return cls(
-            name=str(data["name"]),
-            version=int(data.get("version", 1)),
-            task=str(data.get("task", "detection")),
-            classes=[ClassDef.from_dict(item) for item in data.get("classes") or []],
-            storage=dict(data.get("storage") or {"mode": "content-addressed", "hash": "sha256"}),
-            validation=dict(data.get("validation") or {}),
-            splits=dict(data.get("splits") or {}),
-            exports=dict(data.get("exports") or {}),
-            pack_profiles=dict(data.get("pack_profiles") or {}),
-            annotation=dict(data.get("annotation") or {}),
+            name=model.name,
+            version=model.version,
+            task=model.task,
+            classes=[ClassDef(id=item.id, name=item.name or item.id) for item in model.classes],
+            storage=model.storage,
+            validation=model.validation,
+            splits=model.splits,
+            exports=model.exports,
+            pack_profiles=model.pack_profiles,
+            annotation=model.annotation,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -103,6 +142,14 @@ def read_manifest(path: Path) -> Manifest:
 
 def write_manifest(path: Path, manifest: Manifest) -> None:
     path.write_text(_dump_yaml(manifest.to_dict()), encoding="utf-8")
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    lines = ["visionpack.yaml is invalid:"]
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error["loc"]) or "(root)"
+        lines.append(f"  - {location}: {error['msg']}")
+    return "\n".join(lines)
 
 
 def _class_id(name: str) -> str:

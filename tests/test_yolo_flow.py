@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import struct
 import tarfile
 import tempfile
 import unittest
@@ -8,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 import zstandard as zstd
+from PIL import Image
 
 from visionpack.core.project import Project
 from visionpack.diff import diff_snapshots
@@ -86,9 +86,7 @@ class YoloFlowTest(unittest.TestCase):
 
 
 def _write_png_header(path: Path, width: int, height: int) -> None:
-    signature = b"\x89PNG\r\n\x1a\n"
-    ihdr = struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", width, height) + b"\x08\x02\x00\x00\x00" + b"\x00\x00\x00\x00"
-    path.write_bytes(signature + ihdr + b"\x00" * 16)
+    Image.new("RGB", (width, height), color=(127, 127, 127)).save(path, format="PNG")
 
 
 def _read_tar_zst_names(path: Path) -> set[str]:

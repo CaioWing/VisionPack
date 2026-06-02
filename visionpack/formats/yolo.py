@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import shutil
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from visionpack.core.errors import FormatError
 from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary
-from visionpack.media import is_image_path, image_info
-from visionpack.storage.hash import sha256_file
+from visionpack.media import is_image_path, image_info_from_bytes
+from visionpack.storage.hash import sha256_bytes
 from visionpack.storage.object_store import CopyMode
+
+
+@dataclass(slots=True)
+class _ProcessedImage:
+    asset: Asset
+    annotation: Annotation | None
+    object_count: int
+    label_path: Path | None
 
 
 class YoloImporter:
@@ -29,41 +39,19 @@ class YoloImporter:
         matched_label_files: set[Path] = set()
         summary = ImportSummary(classes_added=classes_added)
 
-        for image_path in images:
-            width, height, channels, image_format = image_info(image_path)
-            digest = sha256_file(image_path)
-            asset_id = f"asset_{digest[:16]}"
-            stored_path = self.project.object_store.store(image_path, digest, self.copy_mode)
-            asset = Asset(
-                id=asset_id,
-                sha256=digest,
-                media_type="image",
-                path=stored_path,
-                original_path=str(image_path),
-                width=width,
-                height=height,
-                channels=channels,
-                format=image_format,
-                size_bytes=image_path.stat().st_size,
-            )
-            self.project.index.upsert_asset(asset)
-            summary.assets += 1
-
-            label_path = _label_path_for_image(image_path, image_root)
-            if label_path is not None:
-                matched_label_files.add(label_path)
-                objects = _parse_yolo_label(label_path, width, height, self.project)
-                annotation = Annotation(
-                    id=f"ann_{asset_id}",
-                    asset_id=asset_id,
-                    task=self.project.manifest.task,
-                    format="internal",
-                    objects=objects,
-                    source={"type": "import", "format": "yolo", "path": str(label_path), "imported_at": utc_now()},
-                )
-                self.project.index.upsert_annotation(annotation)
-                summary.annotations += 1
-                summary.objects += len(objects)
+        # Reading bytes, hashing, image probing and storing are per-file and
+        # I/O-bound, so fan them out across threads. Index mutation stays on the
+        # calling thread, and ThreadPoolExecutor.map preserves input order so the
+        # resulting index is deterministic regardless of worker scheduling.
+        with ThreadPoolExecutor() as pool:
+            for processed in pool.map(lambda path: self._process_image(path, image_root), images):
+                self.project.index.upsert_asset(processed.asset)
+                summary.assets += 1
+                if processed.annotation is not None:
+                    matched_label_files.add(processed.label_path)  # type: ignore[arg-type]
+                    self.project.index.upsert_annotation(processed.annotation)
+                    summary.annotations += 1
+                    summary.objects += processed.object_count
 
         orphan_labels = [str(path) for path in label_files if path not in matched_label_files]
         self.project.index.set_orphan_labels(orphan_labels)
@@ -84,6 +72,41 @@ class YoloImporter:
             self.project.save_manifest()
         summary.orphan_labels = len(orphan_labels)
         return summary
+
+    def _process_image(self, image_path: Path, image_root: Path) -> _ProcessedImage:
+        data = image_path.read_bytes()
+        digest = sha256_bytes(data)
+        width, height, channels, image_format = image_info_from_bytes(data, image_path)
+        asset_id = f"asset_{digest[:16]}"
+        stored_path = self.project.object_store.store(image_path, digest, self.copy_mode, data=data)
+        asset = Asset(
+            id=asset_id,
+            sha256=digest,
+            media_type="image",
+            path=stored_path,
+            original_path=str(image_path),
+            width=width,
+            height=height,
+            channels=channels,
+            format=image_format,
+            size_bytes=len(data),
+        )
+
+        label_path = _label_path_for_image(image_path, image_root)
+        annotation: Annotation | None = None
+        object_count = 0
+        if label_path is not None:
+            objects = _parse_yolo_label(label_path, width, height, self.project)
+            object_count = len(objects)
+            annotation = Annotation(
+                id=f"ann_{asset_id}",
+                asset_id=asset_id,
+                task=self.project.manifest.task,
+                format="internal",
+                objects=objects,
+                source={"type": "import", "format": "yolo", "path": str(label_path), "imported_at": utc_now()},
+            )
+        return _ProcessedImage(asset=asset, annotation=annotation, object_count=object_count, label_path=label_path)
 
 
 def export_yolo(project: Project, output: Path) -> dict[str, int]:

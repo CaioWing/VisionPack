@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-import struct
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image, UnidentifiedImageError
 
 from visionpack.core.errors import FormatError
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
+# Extensions VisionPack will pick up during import discovery. Pillow can decode
+# many more, but an explicit allowlist keeps import behavior predictable.
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
+
+# EXIF orientation tag and the values that imply width/height are swapped when
+# the image is displayed. Annotation coordinates (YOLO/COCO) are expressed in the
+# displayed frame, so probed dimensions must account for this.
+_ORIENTATION_TAG = 0x0112
+_SWAPPED_ORIENTATIONS = {5, 6, 7, 8}
 
 
 def is_image_path(path: Path) -> bool:
@@ -13,43 +23,42 @@ def is_image_path(path: Path) -> bool:
 
 
 def image_info(path: Path) -> tuple[int, int, int | None, str]:
-    with path.open("rb") as handle:
-        header = handle.read(64)
-
-    if header.startswith(b"\x89PNG\r\n\x1a\n") and len(header) >= 24:
-        width, height = struct.unpack(">II", header[16:24])
-        return width, height, None, "png"
-    if header[:2] == b"\xff\xd8":
-        width, height = _jpeg_size(path)
-        return width, height, 3, "jpeg"
-    if header.startswith(b"GIF87a") or header.startswith(b"GIF89a"):
-        width, height = struct.unpack("<HH", header[6:10])
-        return width, height, None, "gif"
-    if header.startswith(b"BM") and len(header) >= 26:
-        width, height = struct.unpack("<ii", header[18:26])
-        return abs(width), abs(height), None, "bmp"
-    raise FormatError(f"File is not a readable image: {path}")
+    """Probe an image on disk, reading only what the codec needs for the header."""
+    try:
+        with Image.open(path) as img:
+            return _probe(img, path)
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise FormatError(f"File is not a readable image: {path} ({exc})") from exc
 
 
-def _jpeg_size(path: Path) -> tuple[int, int]:
-    with path.open("rb") as handle:
-        handle.read(2)
-        while True:
-            byte = handle.read(1)
-            if not byte:
-                break
-            if byte != b"\xff":
-                continue
-            marker = handle.read(1)
-            while marker == b"\xff":
-                marker = handle.read(1)
-            if marker in {b"\xc0", b"\xc1", b"\xc2", b"\xc3", b"\xc5", b"\xc6", b"\xc7", b"\xc9", b"\xca", b"\xcb", b"\xcd", b"\xce", b"\xcf"}:
-                handle.read(3)
-                height, width = struct.unpack(">HH", handle.read(4))
-                return width, height
-            length_bytes = handle.read(2)
-            if len(length_bytes) != 2:
-                break
-            length = struct.unpack(">H", length_bytes)[0]
-            handle.seek(length - 2, 1)
-    raise FormatError(f"Could not read JPEG dimensions: {path}")
+def image_info_from_bytes(data: bytes, source: Path) -> tuple[int, int, int | None, str]:
+    """Probe an image already held in memory.
+
+    Used by import, where the bytes have just been read to compute the content
+    hash, so dimensions and hash come from a single read of the file.
+    """
+    try:
+        with Image.open(BytesIO(data)) as img:
+            return _probe(img, source)
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise FormatError(f"File is not a readable image: {source} ({exc})") from exc
+
+
+def _probe(img: Image.Image, source: Path) -> tuple[int, int, int | None, str]:
+    width, height = img.size
+    channels = len(img.getbands()) or None
+    image_format = (img.format or source.suffix.lstrip(".")).lower()
+    if _exif_swaps_dimensions(img):
+        width, height = height, width
+    return width, height, channels, image_format
+
+
+def _exif_swaps_dimensions(img: Image.Image) -> bool:
+    getexif = getattr(img, "getexif", None)
+    if getexif is None:
+        return False
+    try:
+        orientation = getexif().get(_ORIENTATION_TAG)
+    except Exception:  # noqa: BLE001 - corrupt EXIF must not break probing
+        return False
+    return orientation in _SWAPPED_ORIENTATIONS

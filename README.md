@@ -1,8 +1,12 @@
 # VisionPack: DatasetOps para Visão Computacional
 
-## Estado atual da implementacao
+## Project Status
 
-O primeiro ciclo do MVP ja tem um pacote Python importavel e uma CLI `vp` com:
+VisionPack is in an early MVP stage. The current codebase already provides an installable Python package and a CLI named `vp`.
+
+For practical usage, see [docs/usage.md](docs/usage.md).
+
+### Done
 
 ```bash
 vp init --name factory-defects --task detection
@@ -16,23 +20,84 @@ vp export --format yolo --output exports/yolo-v1
 vp pack --profile archive
 ```
 
-Funcionalidades implementadas neste ciclo:
+Implemented:
 
-- estrutura de pacote `visionpack/` separada por CLI, core, storage, index, formats e validation
-- manifesto `visionpack.yaml`
-- armazenamento local content-addressed em `.vp/objects/sha256`
-- indice local JSON em `.vp/db/index.json`, com interface preparada para trocar por DuckDB
-- importacao YOLO detection com classes, imagens, labels e bounding boxes normalizadas
-- validacao de imagens, classes, bounding boxes, labels orfaos, duplicatas exatas e splits
-- estatisticas de dataset
-- snapshots locais versionados
-- diff entre snapshots
-- export YOLO
-- archive packing em `.tar.zst`
-- dependencias gerenciadas por `uv`
-- testes cobrindo o fluxo principal
+- Python package structure split across CLI, core, storage, index, formats, validation, packing, and tests
+- `uv` dependency management with `uv.lock`
+- `visionpack.yaml` manifest creation and parsing
+- local content-addressed asset store under `.vp/objects/sha256`
+- JSON local index under `.vp/db/index.json`, with an interface that can later be replaced by DuckDB
+- YOLO detection import with image hashing, class discovery, normalized label parsing, and internal bounding-box conversion
+- validation for unreadable images, missing annotations, orphan labels, unknown classes, invalid bounding boxes, duplicate content, and split leakage
+- dataset statistics
+- local snapshots with manifest, asset, annotation, split, and stats hashes
+- diff between snapshots
+- YOLO export
+- archive packing to `.tar.zst`
+- integration tests for the main YOLO flow
 
-Ainda esta como scaffold: `vp annotate`. Os proximos passos naturais sao trocar o indice JSON por DuckDB, adicionar COCO import/export e implementar `pack --profile training`.
+### Roadmap
+
+The roadmap is sequenced so that each phase unblocks the next. Phases A and C
+make the tool correct and scalable; phase B contains the differentiators that
+make VisionPack worth adopting over a pile of scripts.
+
+#### Phase 0 — Foundations (done)
+
+Make the core correct and able to handle the README's own target scale
+(~12k images / 47k annotations) before adding features on top.
+
+- [x] index access without O(n²) scans (cache deserialized records; build
+      `asset_id -> annotation` lookup once) — `index/json_index.py`
+- [x] parallelize import hashing + image probing, reading each file once for
+      hash + probe + store (`formats/yolo.py`, `media.py`, `storage/`)
+- [x] fix `.webp` import crash and EXIF-orientation width/height swaps by probing
+      images with Pillow (`media.py`), with regression tests
+- [x] validate manifest + `visionpack.yaml` with `pydantic` for actionable,
+      field-level schema errors (`core/manifest.py`), with tests
+
+#### Phase A — Scale & format coverage
+
+- [ ] replace the JSON index implementation with DuckDB while preserving the existing
+      `JsonIndex`-style interface; design queries (`assets_by_split`,
+      `annotation_for_asset`, `class_counts`) as SQL
+- [ ] content-address snapshots: store inventory as a blob in `.vp/objects` and have
+      snapshots reference its hash (stop embedding the full inventory per snapshot)
+- [ ] implement COCO import
+- [ ] implement COCO export
+- [ ] implement split creation and locking commands
+- [ ] implement `vp pack --profile training` (WebDataset shards)
+
+#### Phase B — Differentiators (what makes it essential)
+
+- [ ] **near-duplicate & cross-split leakage detection**: fast perceptual hash
+      (pHash/dHash) by default, optional embedding tier (CLIP/DINOv2) behind an extra;
+      surface train↔test leakage and near-dup clusters in `vp validate`
+- [ ] **label-health audit** (`vp audit`): high-IoU duplicate boxes, degenerate/edge-pinned
+      boxes, per-class aspect-ratio outliers, class imbalance, scored report
+- [ ] **model-in-the-loop quality** (optional extra, keeps core PyTorch-free): surface
+      confident detections with no matching label, and confident disagreements with labels
+- [ ] **distribution-drift diff**: class-distribution and resolution drift between snapshots
+      (per-class deltas / KL divergence), not just added/removed IDs
+- [ ] **dataset → model lineage**: `vp snapshot tag v4 trained:<run-id>` plus a metrics blob,
+      to make the reproducibility claim real
+
+#### Phase C — Reporting & polish
+
+- [ ] add HTML validation, stats, and drift reports
+- [ ] add JSON report output for stats and snapshot diff workflows
+- [ ] add richer terminal output with `rich`
+- [ ] move CLI plumbing from `argparse` to `typer` once command behavior stabilizes
+- [ ] expand fixture coverage with malformed YOLO/COCO datasets
+
+#### Later
+
+- [ ] implement `vp annotate prepare` and `vp annotate ingest`
+- [ ] add CVAT and Label Studio annotation package support
+- [ ] add dataset-card generation
+- [ ] add active-learning queue (rank unlabeled images by model uncertainty)
+- [ ] add remote storage integrations (S3/GCS/Azure)
+- [ ] add optional PyTorch dataset helpers
 
 ## 1. Objetivo
 
