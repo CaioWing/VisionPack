@@ -12,6 +12,8 @@ For practical usage, see [docs/usage.md](docs/usage.md).
 vp init --name factory-defects --task detection
 vp import ./raw --format yolo
 vp import ./coco.json --format coco --images ./images
+vp sync --dry-run          # report what the declared sources would ingest
+vp sync                    # reconcile the dataset with the sources: block in visionpack.yaml
 vp validate --strict
 vp stats
 vp stats --by split
@@ -38,6 +40,7 @@ Implemented:
 - YOLO detection import (parallelized) with image hashing, class discovery, normalized label parsing, and internal bounding-box conversion
 - COCO detection import and export (instances JSON)
 - multi-source merging: classes from different sources merge by name (YOLO labels mapped via the source's own class order, not positionally)
+- declarative multi-source assembly: a `sources:` block in `visionpack.yaml` links images and labels living in different folders/repos (joined by file stem or relative path, with optional `class_map`), and `vp sync` reconciles the dataset idempotently (content-addressed, re-runnable), recording per-asset provenance; `vp sync --dry-run` previews found/matched/unmatched/classes per source
 - deterministic, versionable train/val/test splits (stratified / random / hash strategies, seeded, lockable, captured in snapshots)
 - per-split statistics for comparable metrics as the dataset grows
 - split-aware YOLO and COCO export producing ready-to-train train/val/test layouts
@@ -96,6 +99,16 @@ Make the core correct and able to handle the README's own target scale
       fine, and DuckDB's payoff (SQL aggregations/joins, scale past RAM) is pulled by
       Phase B. When built, use an in-memory DuckDB query layer over the portable JSON
       store (no binary index file, no file-lock issues), driven by a real Phase B query.
+
+#### Multi-source ingestion (declarative `sources:` + `vp sync`)
+
+- [x] `sources:` block links images and labels from different locations (folders/repos)
+      with a join rule (`relpath`/`stem`); `vp sync` reconciles the index idempotently
+      and `vp sync --dry-run` reports found/matched/unmatched/classes; per-asset
+      provenance + class reconciliation by name with optional `class_map`; resolver
+      layer keyed by URI scheme so remote backends drop in (`sources/`, `cli/commands/sync.py`)
+- [ ] remote backends via fsspec behind extras (`s3`/`gcs`/`azure`/`git`, pinned by
+      ref/version) and COCO-format sources, plugging into the same resolver layer
 
 #### Phase B — Differentiators (what makes it essential)
 
