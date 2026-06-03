@@ -10,8 +10,10 @@ For practical usage, see [docs/usage.md](docs/usage.md).
 
 ```bash
 vp init --name factory-defects --task detection
+vp init --name product-grades --task classification
 vp import ./raw --format yolo
-vp import ./coco.json --format coco --images ./images
+vp import ./train --format imagefolder        # classification (folder-per-class)
+vp import ./coco.json --format coco --images ./images   # detection / segmentation / keypoints
 vp sync --dry-run          # report what the declared sources would ingest
 vp sync                    # reconcile the dataset with the sources: block in visionpack.yaml
 vp validate --strict
@@ -37,8 +39,15 @@ Implemented:
 - local content-addressed asset store under `.vp/objects/sha256`
 - JSON local index under `.vp/db/index.json` with cached, O(1) annotation lookups (DuckDB-ready interface)
 - robust image probing via Pillow (webp/EXIF-orientation correct), reading each file once for hash + probe + store
+- task-general annotation model: each label carries an optional tagged geometry
+  (`bbox` for detection, `polygon` for instance segmentation, `keypoints` for pose,
+  or none for whole-image classification); a derived `bbox` keeps detection-oriented
+  code working across tasks, and the legacy bare-`bbox` schema still loads
+- classification import/export via the folder-per-class ImageFolder convention
+  (`vp import ./train --format imagefolder`, `vp export --format imagefolder --split`)
 - YOLO detection import (parallelized) with image hashing, class discovery, normalized label parsing, and internal bounding-box conversion
-- COCO detection import and export (instances JSON)
+- COCO import and export (instances JSON) for detection, instance segmentation
+  (polygons), and keypoints, selected by the project task
 - multi-source merging: classes from different sources merge by name (YOLO labels mapped via the source's own class order, not positionally)
 - declarative multi-source assembly: a `sources:` block in `visionpack.yaml` links images and labels living in different folders/repos (joined by file stem or relative path, with optional `class_map`), and `vp sync` reconciles the dataset idempotently (content-addressed, re-runnable), recording per-asset provenance; `vp sync --dry-run` previews found/matched/unmatched/classes per source
 - deterministic, versionable train/val/test splits (stratified / random / hash strategies, seeded, lockable, captured in snapshots)
@@ -109,6 +118,20 @@ Make the core correct and able to handle the README's own target scale
       layer keyed by URI scheme so remote backends drop in (`sources/`, `cli/commands/sync.py`)
 - [ ] remote backends via fsspec behind extras (`s3`/`gcs`/`azure`/`git`, pinned by
       ref/version) and COCO-format sources, plugging into the same resolver layer
+
+#### Task coverage (beyond detection)
+
+- [x] generalize the annotation model to a tagged geometry (bbox | polygon |
+      keypoints | none) with a derived enclosing bbox and backward-compatible
+      loading of the old schema (`core/models.py`)
+- [x] classification: ImageFolder import/export; stats, stratified splits, and
+      validation work unchanged via the geometry-agnostic class-id paths
+      (`formats/classification.py`)
+- [x] instance segmentation (polygons) and keypoints via COCO import/export,
+      chosen by the project task (`formats/coco.py`)
+- [ ] semantic segmentation (per-class mask PNGs) — deferred from this slice
+- [ ] YOLO-seg / YOLO-pose import-export and a dedicated keypoint importer
+- [ ] `--format auto` task/format detection
 
 #### Phase B — Differentiators (what makes it essential)
 

@@ -31,6 +31,13 @@ class BBox:
     height: float
     coordinate_system: str = "xywh_absolute"
 
+    @property
+    def kind(self) -> str:
+        return "bbox"
+
+    def bounding_box(self) -> "BBox":
+        return self
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BBox":
         return cls(
@@ -42,21 +49,119 @@ class BBox:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "kind": "bbox",
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+            "coordinate_system": self.coordinate_system,
+        }
+
+
+@dataclass(slots=True)
+class Polygon:
+    """One or more rings of absolute (x, y) vertices (COCO ``segmentation``).
+
+    Multiple rings represent a multipart instance (e.g. an object split by
+    occlusion), each ring a flat ``[x1, y1, x2, y2, ...]`` list.
+    """
+
+    rings: list[list[float]]
+
+    @property
+    def kind(self) -> str:
+        return "polygon"
+
+    def bounding_box(self) -> BBox:
+        xs = [point for ring in self.rings for point in ring[0::2]]
+        ys = [point for ring in self.rings for point in ring[1::2]]
+        if not xs or not ys:
+            return BBox(0.0, 0.0, 0.0, 0.0)
+        min_x, min_y = min(xs), min(ys)
+        return BBox(min_x, min_y, max(xs) - min_x, max(ys) - min_y)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Polygon":
+        return cls(rings=[[float(value) for value in ring] for ring in data["rings"]])
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kind": "polygon", "rings": self.rings}
+
+
+@dataclass(slots=True)
+class Keypoints:
+    """COCO-style keypoints: a flat ``[x1, y1, v1, x2, y2, v2, ...]`` list where
+    ``v`` is visibility (0 not labeled, 1 labeled-but-hidden, 2 visible)."""
+
+    points: list[float]
+    names: list[str] | None = None
+
+    @property
+    def kind(self) -> str:
+        return "keypoints"
+
+    def bounding_box(self) -> BBox:
+        xs = [self.points[i] for i in range(0, len(self.points), 3) if self.points[i + 2] > 0]
+        ys = [self.points[i + 1] for i in range(0, len(self.points), 3) if self.points[i + 2] > 0]
+        if not xs or not ys:
+            return BBox(0.0, 0.0, 0.0, 0.0)
+        min_x, min_y = min(xs), min(ys)
+        return BBox(min_x, min_y, max(xs) - min_x, max(ys) - min_y)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Keypoints":
+        return cls(points=[float(value) for value in data["points"]], names=data.get("names"))
+
+    def to_dict(self) -> dict[str, Any]:
+        document: dict[str, Any] = {"kind": "keypoints", "points": self.points}
+        if self.names is not None:
+            document["names"] = self.names
+        return document
+
+
+Geometry = BBox | Polygon | Keypoints
+
+_GEOMETRY_TYPES: dict[str, Any] = {"bbox": BBox, "polygon": Polygon, "keypoints": Keypoints}
+
+
+def parse_geometry(data: dict[str, Any]) -> Geometry:
+    kind = str(data.get("kind", "bbox"))
+    geometry_type = _GEOMETRY_TYPES.get(kind)
+    if geometry_type is None:
+        raise ValueError(f"Unknown geometry kind: {kind!r}")
+    return geometry_type.from_dict(data)
 
 
 @dataclass(slots=True)
 class ObjectAnnotation:
+    """A labeled element of an image.
+
+    ``geometry`` is ``None`` for whole-image labels (classification); a ``BBox``
+    for detection; a ``Polygon`` for instance segmentation; ``Keypoints`` for
+    pose. The ``bbox`` property always yields an enclosing box (derived for
+    polygons/keypoints), so detection-oriented code keeps working across tasks.
+    """
+
     class_id: str
-    bbox: BBox
+    geometry: Geometry | None = None
     confidence: float | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def bbox(self) -> BBox | None:
+        return self.geometry.bounding_box() if self.geometry is not None else None
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ObjectAnnotation":
+        geometry: Geometry | None = None
+        if data.get("geometry") is not None:
+            geometry = parse_geometry(data["geometry"])
+        elif data.get("bbox") is not None:  # legacy schema: bare bbox
+            geometry = BBox.from_dict(data["bbox"])
         return cls(
             class_id=str(data["class_id"]),
-            bbox=BBox.from_dict(data["bbox"]),
+            geometry=geometry,
             confidence=data.get("confidence"),
             attributes=dict(data.get("attributes", {})),
         )
@@ -64,7 +169,7 @@ class ObjectAnnotation:
     def to_dict(self) -> dict[str, Any]:
         return {
             "class_id": self.class_id,
-            "bbox": self.bbox.to_dict(),
+            "geometry": self.geometry.to_dict() if self.geometry is not None else None,
             "confidence": self.confidence,
             "attributes": self.attributes,
         }

@@ -160,6 +160,8 @@ def export_yolo(project: Project, output: Path, split_id: str | None = None) -> 
                 if obj.class_id not in class_index:
                     continue
                 bbox = obj.bbox
+                if bbox is None:  # whole-image label (classification): no box to write
+                    continue
                 x_center = (bbox.x + bbox.width / 2) / asset.width
                 y_center = (bbox.y + bbox.height / 2) / asset.height
                 width = bbox.width / asset.width
@@ -227,7 +229,7 @@ def parse_yolo_label_text(
         objects.append(
             ObjectAnnotation(
                 class_id=index_to_class_id.get(class_index, f"class_{class_index}"),
-                bbox=BBox(x=x, y=y, width=abs_width, height=abs_height),
+                geometry=BBox(x=x, y=y, width=abs_width, height=abs_height),
             )
         )
     return objects

@@ -4,13 +4,14 @@ import argparse
 from pathlib import Path
 
 from visionpack.core.project import Project
+from visionpack.formats.classification import export_imagefolder
 from visionpack.formats.coco import export_coco
 from visionpack.formats.yolo import export_yolo
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("export", help="Export a dataset")
-    parser.add_argument("--format", required=True, choices=["yolo", "coco"], help="Output format")
+    parser.add_argument("--format", required=True, choices=["yolo", "coco", "imagefolder"], help="Output format")
     parser.add_argument("--output", required=True, help="Output directory")
     parser.add_argument(
         "--split",
@@ -29,6 +30,9 @@ def run(args: argparse.Namespace) -> int:
         summary = export_coco(project, output, split_id=args.split)
         detail = f"{summary['images']} images, {summary['annotations']} annotations, {summary['objects']} objects"
         print(f"Exported COCO dataset to {output.resolve()}: {detail}")
+    elif args.format == "imagefolder":
+        summary = export_imagefolder(project, output, split_id=args.split)
+        print(f"Exported ImageFolder dataset to {output.resolve()}: {summary['images']} images")
     else:
         summary = export_yolo(project, output, split_id=args.split)
         detail = f"{summary['images']} images, {summary['labels']} label files, {summary['objects']} objects"

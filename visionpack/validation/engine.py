@@ -110,6 +110,8 @@ def validate_project(project: Project, strict: bool = False) -> ValidationReport
                     )
                 )
             bbox = obj.bbox
+            if bbox is None:  # whole-image label (classification): no box to check
+                continue
             min_area = project.manifest.validation.get("bbox", {}).get("min_area_px", 0)
             if bbox.width <= 0 or bbox.height <= 0 or bbox.width * bbox.height < min_area:
                 issues.append(

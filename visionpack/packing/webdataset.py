@@ -11,7 +11,7 @@ from typing import Any, BinaryIO
 import zstandard as zstd
 
 from visionpack.core.errors import VisionPackError
-from visionpack.core.models import Asset, utc_now
+from visionpack.core.models import Asset, Keypoints, Polygon, utc_now
 from visionpack.core.project import Project
 from visionpack.split import resolve_export_sets
 
@@ -166,20 +166,21 @@ def _sample_label(project: Project, asset: Asset, class_index: dict[str, int]) -
         for obj in annotation.objects:
             if obj.class_id not in class_index:
                 continue
+            entry: dict[str, Any] = {"class_id": obj.class_id, "class_index": class_index[obj.class_id]}
             bbox = obj.bbox
-            objects.append(
-                {
-                    "class_id": obj.class_id,
-                    "class_index": class_index[obj.class_id],
-                    "bbox": [bbox.x, bbox.y, bbox.width, bbox.height],
-                    "bbox_normalized": [
-                        (bbox.x + bbox.width / 2) / asset.width,
-                        (bbox.y + bbox.height / 2) / asset.height,
-                        bbox.width / asset.width,
-                        bbox.height / asset.height,
-                    ],
-                }
-            )
+            if bbox is not None:
+                entry["bbox"] = [bbox.x, bbox.y, bbox.width, bbox.height]
+                entry["bbox_normalized"] = [
+                    (bbox.x + bbox.width / 2) / asset.width,
+                    (bbox.y + bbox.height / 2) / asset.height,
+                    bbox.width / asset.width,
+                    bbox.height / asset.height,
+                ]
+            if isinstance(obj.geometry, Polygon):
+                entry["polygon"] = obj.geometry.rings
+            elif isinstance(obj.geometry, Keypoints):
+                entry["keypoints"] = obj.geometry.points
+            objects.append(entry)
     document = {"key": asset.id, "width": asset.width, "height": asset.height, "objects": objects}
     return json.dumps(document).encode("utf-8")
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from visionpack.core.errors import FormatError
 from visionpack.core.manifest import class_id_from_name
-from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, utc_now
+from visionpack.core.models import Annotation, Asset, BBox, Geometry, Keypoints, ObjectAnnotation, Polygon, utc_now
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary
 from visionpack.media import image_info_from_bytes
@@ -124,14 +124,11 @@ class CocoImporter:
         records = annotations_by_image.get(int(image_record["id"]), [])
         objects: list[ObjectAnnotation] = []
         for record in records:
-            bbox = record.get("bbox")
-            if not bbox or len(bbox) < 4:
-                raise FormatError(f"COCO annotation {record.get('id')} for image {file_name} has an invalid bbox: {bbox!r}")
-            x, y, box_width, box_height = (float(value) for value in bbox[:4])
+            geometry = _geometry_from_record(record, self.project.manifest.task, file_name)
             objects.append(
                 ObjectAnnotation(
                     class_id=category_to_class_id.get(int(record["category_id"]), str(record["category_id"])),
-                    bbox=BBox(x=x, y=y, width=box_width, height=box_height),
+                    geometry=geometry,
                     attributes={"iscrowd": int(record["iscrowd"])} if record.get("iscrowd") else {},
                 )
             )
@@ -196,16 +193,22 @@ def export_coco(project: Project, output: Path, split_id: str | None = None) -> 
             if obj.class_id not in class_to_category:
                 continue
             bbox = obj.bbox
-            buckets[set_name]["annotations"].append(
-                {
-                    "id": next_annotation_id[set_name],
-                    "image_id": image_id,
-                    "category_id": class_to_category[obj.class_id],
-                    "bbox": [bbox.x, bbox.y, bbox.width, bbox.height],
-                    "area": bbox.width * bbox.height,
-                    "iscrowd": int(obj.attributes.get("iscrowd", 0)),
-                }
-            )
+            if bbox is None:  # whole-image label: not representable in COCO instances
+                continue
+            record: dict[str, Any] = {
+                "id": next_annotation_id[set_name],
+                "image_id": image_id,
+                "category_id": class_to_category[obj.class_id],
+                "bbox": [bbox.x, bbox.y, bbox.width, bbox.height],
+                "area": bbox.width * bbox.height,
+                "iscrowd": int(obj.attributes.get("iscrowd", 0)),
+            }
+            if isinstance(obj.geometry, Polygon):
+                record["segmentation"] = obj.geometry.rings
+            elif isinstance(obj.geometry, Keypoints):
+                record["keypoints"] = obj.geometry.points
+                record["num_keypoints"] = sum(1 for i in range(2, len(obj.geometry.points), 3) if obj.geometry.points[i] > 0)
+            buckets[set_name]["annotations"].append(record)
             next_annotation_id[set_name] += 1
             exported_objects += 1
 
@@ -235,6 +238,42 @@ def export_coco(project: Project, output: Path, split_id: str | None = None) -> 
         result["sets"] = per_set
         result["skipped"] = skipped
     return result
+
+
+def _geometry_from_record(record: dict[str, Any], task: str, file_name: str) -> Geometry:
+    """Pick the geometry to keep for a COCO annotation, guided by the task.
+
+    COCO records often carry several geometries at once (a segmentation plus its
+    enclosing bbox); the project task decides which is authoritative, falling
+    back to bbox when the richer geometry is absent.
+    """
+    if task == "segmentation":
+        polygon = _polygon_from_segmentation(record.get("segmentation"))
+        if polygon is not None:
+            return polygon
+    if task == "keypoints":
+        keypoints = record.get("keypoints")
+        if keypoints:
+            return Keypoints(points=[float(value) for value in keypoints])
+
+    bbox = record.get("bbox")
+    if not bbox or len(bbox) < 4:
+        raise FormatError(
+            f"COCO annotation {record.get('id')} for image {file_name} has no usable geometry "
+            f"for task {task!r} (bbox={bbox!r})."
+        )
+    x, y, box_width, box_height = (float(value) for value in bbox[:4])
+    return BBox(x=x, y=y, width=box_width, height=box_height)
+
+
+def _polygon_from_segmentation(segmentation: Any) -> Polygon | None:
+    # COCO polygons are a list of flat [x,y,...] rings. RLE masks (a dict) are
+    # not supported in this slice; skip them so bbox can take over.
+    if isinstance(segmentation, list) and segmentation and isinstance(segmentation[0], list):
+        rings = [[float(value) for value in ring] for ring in segmentation if ring]
+        if rings:
+            return Polygon(rings=rings)
+    return None
 
 
 def _load_coco(path: Path) -> dict[str, Any]:
