@@ -24,6 +24,7 @@ vp export --format yolo --output exports/yolo-v1
 vp export --format yolo --output exports/yolo-train --split
 vp export --format coco --output exports/coco-v1
 vp pack --profile archive
+vp pack --profile training --split
 ```
 
 Implemented:
@@ -47,6 +48,7 @@ Implemented:
 - diff between snapshots
 - YOLO and COCO export
 - archive packing to `.tar.zst`
+- split-aware WebDataset training packs (`vp pack --profile training --split`): per-set `.tar` shards (optional zstd) of image + normalized-label samples, sized by `shard_size`, with a self-describing `dataset.json`
 - integration tests for the YOLO and COCO flows, plus media, manifest, and snapshot units
 
 ### Roadmap
@@ -69,7 +71,7 @@ Make the core correct and able to handle the README's own target scale
 - [x] validate manifest + `visionpack.yaml` with `pydantic` for actionable,
       field-level schema errors (`core/manifest.py`), with tests
 
-#### Phase A — Scale & format coverage
+#### Phase A — Scale & format coverage (done — DuckDB deferred by decision)
 
 - [x] content-address snapshots: store the inventory as a deduplicated blob under
       `.vp/snapshots/blobs/<hash>.json`; `vN.json` references `inventory_hash` and
@@ -86,7 +88,10 @@ Make the core correct and able to handle the README's own target scale
 - [x] split-aware export: `vp export --format yolo|coco --split` emits a ready-to-train
       layout (YOLO `images/<set>` + `labels/<set>` + `data.yaml`; COCO `images/<set>` +
       `annotations/instances_<set>.json`) (`formats/`, `split.py`)
-- [ ] implement `vp pack --profile training` (WebDataset shards)
+- [x] implement `vp pack --profile training` (WebDataset shards): split-aware per-set
+      `.tar`/`.tar.zst` shards of `<key>.<img>` + `<key>.json` (normalized boxes), chunked
+      by `shard_size`, reusing `resolve_export_sets`; self-describing `dataset.json`
+      (`packing/webdataset.py`)
 - [ ] DuckDB index — **deferred by decision**: at current scale the cached lists are
       fine, and DuckDB's payoff (SQL aggregations/joins, scale past RAM) is pulled by
       Phase B. When built, use an in-memory DuckDB query layer over the portable JSON

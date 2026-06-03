@@ -74,7 +74,7 @@ class Manifest:
             },
             pack_profiles={
                 "archive": {"format": "tar.zst", "compression_level": 10, "include_metadata": True, "include_assets": True},
-                "training": {"format": "folder", "shard_size": 1024},
+                "training": {"format": "webdataset", "shard_size": 1024, "compression": "none"},
             },
             annotation={"preferred_tool": "cvat", "review_required": True},
         )
