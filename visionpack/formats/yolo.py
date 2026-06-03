@@ -11,6 +11,7 @@ from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, ut
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary
 from visionpack.media import is_image_path, image_info_from_bytes
+from visionpack.perceptual import dhash_bytes
 from visionpack.split import resolve_export_sets
 from visionpack.storage.hash import sha256_bytes
 from visionpack.storage.object_store import CopyMode
@@ -96,6 +97,7 @@ class YoloImporter:
             channels=channels,
             format=image_format,
             size_bytes=len(data),
+            phash=dhash_bytes(data),
         )
 
         label_path = _label_path_for_image(image_path, image_root)

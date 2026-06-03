@@ -4,7 +4,15 @@ from collections import Counter
 from dataclasses import dataclass
 
 from visionpack.core.project import Project
+from visionpack.duplicates import (
+    DEFAULT_THRESHOLD,
+    cluster_pairs,
+    leakage_from_pairs,
+    near_duplicate_pairs,
+    phash_map,
+)
 from visionpack.media import image_info
+from visionpack.split import asset_set_map
 
 
 @dataclass(slots=True)
@@ -132,6 +140,8 @@ def validate_project(project: Project, strict: bool = False) -> ValidationReport
     for sha in duplicate_hashes:
         issues.append(ValidationIssue("warning", "asset.duplicate_exact", f"Duplicate asset content detected: sha256:{sha}"))
 
+    issues.extend(_perceptual_issues(project, assets, asset_by_id))
+
     for split in project.index.splits():
         seen: dict[str, str] = {}
         for split_name, asset_ids in split.sets.items():
@@ -152,3 +162,59 @@ def validate_project(project: Project, strict: bool = False) -> ValidationReport
                     )
 
     return ValidationReport(issues)
+
+
+def _perceptual_issues(project, assets, asset_by_id) -> list[ValidationIssue]:
+    """Near-duplicate clusters and near-duplicate train/test leakage.
+
+    Driven by ``validation.duplicates.perceptual`` (``off`` | ``warn`` |
+    ``error``). Defaults to ``warn`` so the check is on out of the box. Exact
+    byte duplicates are content-addressed to one asset and handled separately, so
+    this only surfaces *re-encoded/resized/cropped* copies. Cross-split leakage
+    is always an error when the check is enabled: it silently inflates metrics.
+    """
+    config = project.manifest.validation.get("duplicates", {})
+    mode = str(config.get("perceptual", "warn"))
+    if mode == "off":
+        return []
+    threshold = int(config.get("perceptual_threshold", DEFAULT_THRESHOLD))
+    severity = "error" if mode == "error" else "warning"
+
+    phashes = phash_map(project, assets)
+    if len(phashes) < 2:
+        return []
+    pairs = near_duplicate_pairs(phashes, threshold)
+    if not pairs:
+        return []
+
+    def describe(asset_id: str) -> str:
+        asset = asset_by_id.get(asset_id)
+        return asset.original_path if asset else asset_id
+
+    issues: list[ValidationIssue] = []
+    for cluster in cluster_pairs(pairs):
+        members = ", ".join(describe(asset_id) for asset_id in cluster.asset_ids[:6])
+        if len(cluster.asset_ids) > 6:
+            members += f", +{len(cluster.asset_ids) - 6} more"
+        issues.append(
+            ValidationIssue(
+                severity,
+                "asset.near_duplicate",
+                f"Near-duplicate cluster ({len(cluster.asset_ids)} images): {members}",
+                cluster.asset_ids[0],
+            )
+        )
+
+    for split in project.index.splits():
+        membership = asset_set_map(split)
+        for leak in leakage_from_pairs(pairs, membership):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "split.near_duplicate_leakage",
+                    f"Near-duplicate leak in split {split.id!r} (distance {leak.distance}): "
+                    f"{describe(leak.asset_a)} in {leak.set_a} ~ {describe(leak.asset_b)} in {leak.set_b}",
+                    leak.asset_a,
+                )
+            )
+    return issues

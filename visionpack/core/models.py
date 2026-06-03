@@ -82,6 +82,7 @@ class Asset:
     channels: int | None
     format: str
     size_bytes: int
+    phash: str | None = None
     created_at: str = field(default_factory=utc_now)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -98,6 +99,7 @@ class Asset:
             channels=data.get("channels"),
             format=str(data["format"]),
             size_bytes=int(data["size_bytes"]),
+            phash=data.get("phash"),
             created_at=str(data.get("created_at", utc_now())),
             metadata=dict(data.get("metadata", {})),
         )

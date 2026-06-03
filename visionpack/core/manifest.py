@@ -65,7 +65,7 @@ class Manifest:
                 "allow_empty_images": True,
                 "bbox": {"min_area_px": 4, "allow_out_of_bounds": False},
                 "splits": {"prevent_leakage": True},
-                "duplicates": {"exact": "warn", "perceptual": "off"},
+                "duplicates": {"exact": "warn", "perceptual": "warn", "perceptual_threshold": 5},
             },
             splits={"default": {"strategy": "random", "train": 0.8, "val": 0.1, "test": 0.1}},
             exports={

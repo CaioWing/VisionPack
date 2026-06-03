@@ -14,6 +14,7 @@ from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, ut
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary
 from visionpack.media import image_info_from_bytes
+from visionpack.perceptual import dhash_bytes
 from visionpack.split import resolve_export_sets
 from visionpack.storage.hash import sha256_bytes
 from visionpack.storage.object_store import CopyMode
@@ -117,6 +118,7 @@ class CocoImporter:
             channels=channels,
             format=image_format,
             size_bytes=len(data),
+            phash=dhash_bytes(data),
         )
 
         records = annotations_by_image.get(int(image_record["id"]), [])

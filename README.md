@@ -40,7 +40,8 @@ Implemented:
 - deterministic, versionable train/val/test splits (stratified / random / hash strategies, seeded, lockable, captured in snapshots)
 - per-split statistics for comparable metrics as the dataset grows
 - split-aware YOLO and COCO export producing ready-to-train train/val/test layouts
-- validation for unreadable images, missing annotations, orphan labels, unknown classes, invalid bounding boxes, duplicate content, and split leakage
+- validation for unreadable images, missing annotations, orphan labels, unknown classes, invalid bounding boxes, exact duplicate content, near-duplicate clusters, and exact/near-duplicate cross-split leakage
+- perceptual-hash (dHash) near-duplicate detection that catches re-encoded/resized/cropped copies exact hashing misses, and flags near-duplicate train↔test leakage that silently inflates metrics (dependency-free, scale-proof via LSH bucketing)
 - dataset statistics
 - content-addressed local snapshots (deduplicated inventory blobs) with manifest, asset, annotation, split, and stats hashes
 - diff between snapshots
@@ -93,9 +94,14 @@ Make the core correct and able to handle the README's own target scale
 
 #### Phase B — Differentiators (what makes it essential)
 
-- [ ] **near-duplicate & cross-split leakage detection**: fast perceptual hash
-      (pHash/dHash) by default, optional embedding tier (CLIP/DINOv2) behind an extra;
-      surface train↔test leakage and near-dup clusters in `vp validate`
+- [x] **near-duplicate & cross-split leakage detection** (perceptual-hash tier): dHash
+      computed at import (reusing the bytes already read for hashing), near-duplicate
+      clusters via LSH bucketing (no O(n²) scan), surfaced in `vp validate` as warnings,
+      and near-duplicate train↔test leakage as errors; tunable via
+      `validation.duplicates.perceptual` + `perceptual_threshold` (`perceptual.py`,
+      `duplicates.py`, `validation/engine.py`)
+- [ ] optional embedding tier for semantic near-duplicates (CLIP/DINOv2 behind an extra),
+      for cases perceptual hashing misses (different crop/lighting, same scene)
 - [ ] **label-health audit** (`vp audit`): high-IoU duplicate boxes, degenerate/edge-pinned
       boxes, per-class aspect-ratio outliers, class imbalance, scored report
 - [ ] **model-in-the-loop quality** (optional extra, keeps core PyTorch-free): surface
