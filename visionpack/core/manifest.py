@@ -18,6 +18,46 @@ class _ClassDefModel(BaseModel):
     name: str | None = None
 
 
+class _LocationModel(BaseModel):
+    """A place to read bytes from: a local path, bucket prefix, or git subpath.
+
+    Plain strings (``./imgs``, ``s3://bucket/prefix``) are accepted directly; the
+    object form adds reproducibility/credentials (``ref`` for git, ``region``,
+    ``credentials`` pointing at a profile — never raw secrets).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str
+    ref: str | None = None
+    path: str | None = None
+    region: str | None = None
+    credentials: dict[str, Any] = Field(default_factory=dict)
+
+
+_LocationField = str | _LocationModel
+
+
+class _SourceModel(BaseModel):
+    """One contribution to the dataset: where images live, where labels live, how
+    to pair them, and in what format."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: str
+    format: str = "yolo"
+    root: _LocationField | None = None
+    images: _LocationField | None = None
+    labels: _LocationField | None = None
+    classes: _LocationField | None = None
+    match: str | None = None
+    class_map: dict[str, str] = Field(default_factory=dict)
+    # `copy` shadows BaseModel.copy, so store it as copy_mode and expose the
+    # friendly `copy:` key in YAML via the alias.
+    copy_mode: str = Field(default="ingest", alias="copy")
+    credentials: dict[str, Any] = Field(default_factory=dict)
+
+
 class _ManifestModel(BaseModel):
     """Validation schema for ``visionpack.yaml``.
 
@@ -34,6 +74,7 @@ class _ManifestModel(BaseModel):
     version: int = 1
     task: str = "detection"
     classes: list[_ClassDefModel] = Field(default_factory=list)
+    sources: list[_SourceModel] = Field(default_factory=list)
     storage: dict[str, Any] = Field(default_factory=lambda: {"mode": "content-addressed", "hash": "sha256"})
     validation: dict[str, Any] = Field(default_factory=dict)
     splits: dict[str, Any] = Field(default_factory=dict)
@@ -48,6 +89,7 @@ class Manifest:
     version: int = 1
     task: str = "detection"
     classes: list[ClassDef] = field(default_factory=list)
+    sources: list[dict[str, Any]] = field(default_factory=list)
     storage: dict[str, Any] = field(default_factory=lambda: {"mode": "content-addressed", "hash": "sha256"})
     validation: dict[str, Any] = field(default_factory=dict)
     splits: dict[str, Any] = field(default_factory=dict)
@@ -94,6 +136,7 @@ class Manifest:
             version=model.version,
             task=model.task,
             classes=[ClassDef(id=item.id, name=item.name or item.id) for item in model.classes],
+            sources=[source.model_dump(by_alias=True, exclude_none=True) for source in model.sources],
             storage=model.storage,
             validation=model.validation,
             splits=model.splits,
@@ -108,6 +151,7 @@ class Manifest:
             "version": self.version,
             "task": self.task,
             "classes": [item.to_dict() for item in self.classes],
+            "sources": self.sources,
             "storage": self.storage,
             "validation": self.validation,
             "splits": self.splits,

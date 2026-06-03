@@ -196,19 +196,30 @@ def _render_data_yaml(classes: list[Any], split_id: str | None, set_names: list[
 
 
 def _parse_yolo_label(path: Path, width: int, height: int, index_to_class_id: dict[int, str]) -> list[ObjectAnnotation]:
+    return parse_yolo_label_text(path.read_text(encoding="utf-8"), str(path), width, height, index_to_class_id)
+
+
+def parse_yolo_label_text(
+    text: str, origin: str, width: int, height: int, index_to_class_id: dict[int, str]
+) -> list[ObjectAnnotation]:
+    """Parse YOLO label lines into absolute-coordinate objects.
+
+    ``origin`` is only used in error messages (a path or URI), so this works the
+    same whether the text came from disk or a remote object.
+    """
     objects: list[ObjectAnnotation] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(text.splitlines(), start=1):
         stripped = _clean_label_line(line)
         if not stripped:
             continue
         parts = stripped.split()
         if len(parts) < 5:
-            raise FormatError(f"Invalid YOLO label at {path}:{line_number}. Expected: class x_center y_center width height")
+            raise FormatError(f"Invalid YOLO label at {origin}:{line_number}. Expected: class x_center y_center width height")
         try:
             class_index = int(float(parts[0]))
             x_center, y_center, box_width, box_height = [float(value) for value in parts[1:5]]
         except ValueError as exc:
-            raise FormatError(f"Invalid numeric YOLO label value at {path}:{line_number}") from exc
+            raise FormatError(f"Invalid numeric YOLO label value at {origin}:{line_number}") from exc
         abs_width = box_width * width
         abs_height = box_height * height
         x = x_center * width - abs_width / 2

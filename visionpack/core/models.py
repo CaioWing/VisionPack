@@ -83,6 +83,7 @@ class Asset:
     format: str
     size_bytes: int
     phash: str | None = None
+    source: str | None = None
     created_at: str = field(default_factory=utc_now)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -100,6 +101,7 @@ class Asset:
             format=str(data["format"]),
             size_bytes=int(data["size_bytes"]),
             phash=data.get("phash"),
+            source=data.get("source"),
             created_at=str(data.get("created_at", utc_now())),
             metadata=dict(data.get("metadata", {})),
         )

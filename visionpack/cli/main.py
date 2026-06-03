@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from visionpack.cli.commands import annotate, diff, export, import_, init, pack, snapshot, split, stats, validate
+from visionpack.cli.commands import annotate, diff, export, import_, init, pack, snapshot, split, stats, sync, validate
 from visionpack.core.errors import VisionPackError
 
 
@@ -14,6 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     init.register(subparsers)
     import_.register(subparsers)
+    sync.register(subparsers)
     validate.register(subparsers)
     stats.register(subparsers)
     split.register(subparsers)
