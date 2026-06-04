@@ -36,9 +36,11 @@ def run_list(args: argparse.Namespace) -> int:
     project = Project.open(".")
     snapshots = list_snapshots(project)
     for item in snapshots:
-        print(f"{item['version']}  {item['created_at']}  {item['message']}")
+        stats = item.get("stats", {})
+        counts = f"{stats.get('assets', '?')} imgs, {stats.get('objects', '?')} objs"
+        print(f"{item['version']:<5} {item['created_at']}  {counts:<20}  {item['message']}")
     if not snapshots:
-        print("No snapshots")
+        print("No snapshots. Create one with: vp snapshot create -m <message>")
     return 0
 
 
