@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from visionpack.core.errors import VisionPackError
 from visionpack.core.models import Asset
 from visionpack.core.project import Project
-from visionpack.perceptual import band_keys, dhash_path, hamming
+from visionpack.perceptual import band_keys, dhash_path
 from visionpack.split import asset_set_map, get_split
 
 # Hamming distance (out of 64 bits) under which two images count as near

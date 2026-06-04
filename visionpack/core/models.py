@@ -16,7 +16,7 @@ class ClassDef:
     name: str
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ClassDef":
+    def from_dict(cls, data: dict[str, Any]) -> ClassDef:
         return cls(id=str(data["id"]), name=str(data.get("name", data["id"])))
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,11 +35,11 @@ class BBox:
     def kind(self) -> str:
         return "bbox"
 
-    def bounding_box(self) -> "BBox":
+    def bounding_box(self) -> BBox:
         return self
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "BBox":
+    def from_dict(cls, data: dict[str, Any]) -> BBox:
         return cls(
             x=float(data["x"]),
             y=float(data["y"]),
@@ -82,7 +82,7 @@ class Polygon:
         return BBox(min_x, min_y, max(xs) - min_x, max(ys) - min_y)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Polygon":
+    def from_dict(cls, data: dict[str, Any]) -> Polygon:
         return cls(rings=[[float(value) for value in ring] for ring in data["rings"]])
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,7 +110,7 @@ class Keypoints:
         return BBox(min_x, min_y, max(xs) - min_x, max(ys) - min_y)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Keypoints":
+    def from_dict(cls, data: dict[str, Any]) -> Keypoints:
         return cls(points=[float(value) for value in data["points"]], names=data.get("names"))
 
     def to_dict(self) -> dict[str, Any]:
@@ -153,7 +153,7 @@ class ObjectAnnotation:
         return self.geometry.bounding_box() if self.geometry is not None else None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ObjectAnnotation":
+    def from_dict(cls, data: dict[str, Any]) -> ObjectAnnotation:
         geometry: Geometry | None = None
         if data.get("geometry") is not None:
             geometry = parse_geometry(data["geometry"])
@@ -193,7 +193,7 @@ class Asset:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Asset":
+    def from_dict(cls, data: dict[str, Any]) -> Asset:
         return cls(
             id=str(data["id"]),
             sha256=str(data["sha256"]),
@@ -230,7 +230,7 @@ class Annotation:
     created_at: str = field(default_factory=utc_now)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Annotation":
+    def from_dict(cls, data: dict[str, Any]) -> Annotation:
         return cls(
             id=str(data["id"]),
             asset_id=str(data["asset_id"]),
@@ -262,7 +262,7 @@ class Split:
     created_at: str = field(default_factory=utc_now)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Split":
+    def from_dict(cls, data: dict[str, Any]) -> Split:
         return cls(
             id=str(data["id"]),
             strategy=str(data.get("strategy", "manual")),

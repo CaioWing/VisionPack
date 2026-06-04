@@ -10,7 +10,7 @@ from visionpack.core.errors import FormatError, VisionPackError
 from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary, IngestFailure
-from visionpack.media import is_image_path, image_info_from_bytes
+from visionpack.media import image_info_from_bytes, is_image_path
 from visionpack.perceptual import dhash_bytes
 from visionpack.progress import ProgressCallback
 from visionpack.split import resolve_export_sets

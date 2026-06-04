@@ -202,7 +202,7 @@ class SqliteIndex:
     # unsaved writes or an already-materialized cache, they fall back to the
     # in-memory view to stay correct.
 
-    def iter_assets(self) -> "Iterator[Asset]":
+    def iter_assets(self) -> Iterator[Asset]:
         if self._dirty_assets or self._assets is not None:
             yield from self.assets()
             return
@@ -213,7 +213,7 @@ class SqliteIndex:
         finally:
             conn.close()
 
-    def iter_annotations(self) -> "Iterator[Annotation]":
+    def iter_annotations(self) -> Iterator[Annotation]:
         if self._dirty_annotations or self._annotations is not None:
             yield from self.annotations()
             return
@@ -224,7 +224,7 @@ class SqliteIndex:
         finally:
             conn.close()
 
-    def iter_assets_with_annotations(self) -> "Iterator[tuple[Asset, Annotation | None]]":
+    def iter_assets_with_annotations(self) -> Iterator[tuple[Asset, Annotation | None]]:
         """Stream each asset paired with its annotation (or None) via a LEFT JOIN.
 
         This is what export/stats want: one pass, no full asset list and no

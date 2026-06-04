@@ -4,14 +4,41 @@ version = "0.1.0"
 description = "DatasetOps for computer vision datasets"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Caio Wingeter", email = "caio@airis-tech.com" }]
+keywords = [
+    "computer-vision",
+    "dataset",
+    "datasetops",
+    "yolo",
+    "coco",
+    "mlops",
+    "machine-learning",
+    "annotations",
+    "reproducibility",
+    "deduplication",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Typing :: Typed",
+]
 dependencies = [
-    "duckdb>=1.5.3",
     "orjson>=3.11.9",
     "pillow>=12.2.0",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
-    "typer>=0.26.4",
     "zstandard>=0.25.0",
 ]
 
@@ -19,9 +46,22 @@ dependencies = [
 vp = "visionpack.cli.main:main"
 visionpack = "visionpack.cli.main:main"
 
+[dependency-groups]
+dev = ["ruff>=0.6"]
+
 [build-system]
-requires = ["setuptools>=65", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["visionpack*"]
+
+[tool.setuptools.package-data]
+visionpack = ["py.typed"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

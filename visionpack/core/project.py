@@ -20,7 +20,7 @@ class Project:
         self.object_store = ObjectStore(self.root)
 
     @classmethod
-    def open(cls, root: str | Path = ".") -> "Project":
+    def open(cls, root: str | Path = ".") -> Project:
         root_path = Path(root).resolve()
         manifest = _find_manifest(root_path)
         if manifest is None:
@@ -28,7 +28,7 @@ class Project:
         return cls(manifest.parent)
 
     @classmethod
-    def init(cls, root: str | Path = ".", name: str | None = None, task: str = "detection") -> "Project":
+    def init(cls, root: str | Path = ".", name: str | None = None, task: str = "detection") -> Project:
         root_path = Path(root).resolve()
         root_path.mkdir(parents=True, exist_ok=True)
         dataset_name = name or root_path.name

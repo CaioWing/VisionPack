@@ -5,7 +5,7 @@ import json
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Any
+from typing import Any, BinaryIO
 
 import zstandard as zstd
 
@@ -13,7 +13,6 @@ from visionpack.core.errors import VisionPackError
 from visionpack.core.models import utc_now
 from visionpack.core.project import Project
 from visionpack.stats import collect_stats
-from visionpack.storage.hash import sha256_file
 
 
 @dataclass(slots=True)
@@ -113,7 +112,7 @@ class _TarZstWriter:
         self._file: BinaryIO | None = None
         self._zstd: Any | None = None
 
-    def open(self, archive_format: str) -> "_TarContext":
+    def open(self, archive_format: str) -> _TarContext:
         self._file = self.path.open("wb")
         if archive_format == "tar.zst":
             compressor = zstd.ZstdCompressor(level=self.compression_level)

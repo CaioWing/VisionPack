@@ -13,7 +13,7 @@ class Location:
     credentials: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def parse(cls, value: Any) -> "Location | None":
+    def parse(cls, value: Any) -> Location | None:
         if value is None:
             return None
         if isinstance(value, str):
@@ -26,13 +26,14 @@ class Location:
             credentials=dict(value.get("credentials", {})),
         )
 
-    def child(self, *parts: str) -> "Location":
+    def child(self, *parts: str) -> Location:
         """A sub-location under this one (e.g. ``root`` -> ``root/images``)."""
+        creds = dict(self.credentials)
         if self.ref is not None:
             # git: descend within the repo's in-tree path, keep repo uri/ref.
-            return Location(uri=self.uri, ref=self.ref, path=_join(self.path, *parts), region=self.region, credentials=dict(self.credentials))
+            return Location(uri=self.uri, ref=self.ref, path=_join(self.path, *parts), region=self.region, credentials=creds)
         # plain path / bucket prefix: extend the uri itself.
-        return Location(uri=_join(self.uri, *parts), ref=None, path=self.path, region=self.region, credentials=dict(self.credentials))
+        return Location(uri=_join(self.uri, *parts), ref=None, path=self.path, region=self.region, credentials=creds)
 
     def resolved_uri(self) -> str:
         """The concrete URI to hand a resolver (``uri`` joined with ``path``)."""
@@ -53,7 +54,7 @@ class Source:
     root: Location | None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Source":
+    def from_dict(cls, data: dict[str, Any]) -> Source:
         fmt = str(data.get("format", "yolo"))
         match = data.get("match") or ("embedded" if fmt == "coco" else "relpath")
         return cls(

@@ -7,10 +7,10 @@ from pathlib import Path
 from visionpack.core.errors import VisionPackError
 from visionpack.core.lock import project_lock
 from visionpack.core.project import Project
-from visionpack.progress import cli_progress
 from visionpack.formats.classification import ImageFolderImporter
 from visionpack.formats.coco import CocoImporter
 from visionpack.formats.yolo import YoloImporter
+from visionpack.progress import cli_progress
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

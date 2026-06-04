@@ -119,7 +119,7 @@ def lock_split(project: Project, split_id: str = "default") -> Split:
 
 
 def _uniform01(seed: int, sha256: str) -> float:
-    digest = hashlib.sha256(f"{seed}:{sha256}".encode("utf-8")).digest()
+    digest = hashlib.sha256(f"{seed}:{sha256}".encode()).digest()
     return struct.unpack(">Q", digest[:8])[0] / float(1 << 64)
 
 
@@ -150,7 +150,7 @@ def _assign_by_rank(asset_ids: list[str], ratios: dict[str, float], ordered_name
     counts = _largest_remainder([ratios[name] for name in ordered_names], len(asset_ids))
     sets: dict[str, list[str]] = {}
     index = 0
-    for name, count in zip(ordered_names, counts):
+    for name, count in zip(ordered_names, counts, strict=True):
         sets[name] = asset_ids[index : index + count]
         index += count
     return sets

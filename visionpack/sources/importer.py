@@ -6,8 +6,8 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from visionpack.core.errors import FormatError, VisionPackError
-from visionpack.core.models import Annotation, Asset, ObjectAnnotation, utc_now
+from visionpack.core.errors import VisionPackError
+from visionpack.core.models import Annotation, Asset, utc_now
 from visionpack.core.project import Project
 from visionpack.formats.base import IngestFailure
 from visionpack.formats.yolo import parse_yolo_label_text
@@ -467,7 +467,7 @@ def _infer_class_names(labels: list[FileRef], label_res: Resolver | None) -> lis
 def sync_sources(
     project: Project,
     source_name: str | None = None,
-    progress_factory: "Callable[[str], AbstractContextManager[ProgressCallback | None]] | None" = None,
+    progress_factory: Callable[[str], AbstractContextManager[ProgressCallback | None]] | None = None,
 ) -> list[SourceSyncSummary]:
     """Sync the declared sources. ``progress_factory`` (e.g. ``cli_progress``)
     yields a fresh progress callback per source so each gets its own bar."""

@@ -98,7 +98,7 @@ class Manifest:
     annotation: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def default(cls, name: str, task: str = "detection") -> "Manifest":
+    def default(cls, name: str, task: str = "detection") -> Manifest:
         return cls(
             name=name,
             task=task,
@@ -122,7 +122,7 @@ class Manifest:
         )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Manifest":
+    def from_dict(cls, data: dict[str, Any]) -> Manifest:
         # Drop explicit nulls so that, like the previous hand-rolled parser, an
         # empty section (e.g. ``classes:`` with no value) falls back to its
         # default instead of failing type validation.
