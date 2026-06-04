@@ -36,10 +36,13 @@ class SqliteIndex:
     A legacy ``index.json`` is migrated transparently on first open.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, db_path: Path | None = None) -> None:
         self.root = root
-        self.path = root / ".vp" / "db" / "index.db"
+        # db_path lets callers open a frozen snapshot index instead of the live
+        # one; in that case there is no legacy JSON to migrate.
+        self.path = db_path if db_path is not None else root / ".vp" / "db" / "index.db"
         self._legacy = root / ".vp" / "db" / "index.json"
+        self._is_live = db_path is None
         # Lazily-populated read caches; None means "not loaded from the DB yet".
         self._assets: dict[str, Asset] | None = None
         self._annotations: dict[str, Annotation] | None = None
@@ -53,7 +56,8 @@ class SqliteIndex:
         self._dirty_metadata: dict[str, Any] = {}
         self._new_imports: list[dict[str, Any]] = []
         self._ensure_schema()
-        self._migrate_legacy_if_needed()
+        if self._is_live:
+            self._migrate_legacy_if_needed()
 
     # -- connection helpers ---------------------------------------------------
 

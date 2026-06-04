@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import copy
 import json
+import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from visionpack.core.models import utc_now
+from visionpack.core.errors import VisionPackError
+from visionpack.core.models import ClassDef, utc_now
 from visionpack.core.project import Project
 from visionpack.stats import collect_stats
 from visionpack.storage.hash import sha256_bytes, sha256_file, stable_json_hash
@@ -16,11 +20,16 @@ def create_snapshot(project: Project, message: str) -> dict[str, Any]:
     existing = list_snapshots(project)
     version = f"v{len(existing) + 1}"
     parent = existing[-1]["version"] if existing else None
+    project.index.save()  # flush any pending writes so the frozen db is current
     inventory = _inventory(project)
     # The inventory is the bulky part of a snapshot and is often unchanged
     # between versions, so store it as a content-addressed blob and reference it
     # by hash. Identical inventories are written once and shared across versions.
     inventory_hash = _store_inventory(project, inventory)
+    # Freeze the index itself (content-addressed) so the snapshot is restorable:
+    # `vp export --snapshot vN` opens this frozen db and streams from it. Images
+    # are referenced from the shared CAS, never copied.
+    index_db_hash = _freeze_index(project)
     payload: dict[str, Any] = {
         "version": version,
         "message": message,
@@ -32,6 +41,7 @@ def create_snapshot(project: Project, message: str) -> dict[str, Any]:
         "parent": parent,
         "stats": collect_stats(project),
         "inventory_hash": inventory_hash,
+        "index_db_hash": index_db_hash,
     }
     (snapshot_dir / f"{version}.json").write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return load_snapshot(project, version)
@@ -78,6 +88,54 @@ def _load_inventory(project: Project, inventory_hash: str) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Snapshot inventory blob missing: {inventory_hash}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _dbs_dir(project: Project) -> Path:
+    return project.root / ".vp" / "snapshots" / "dbs"
+
+
+def _freeze_index(project: Project) -> str | None:
+    """Copy the live index db into the content-addressed snapshot db store.
+
+    Returns its hash, or ``None`` if there is no index yet. Identical indexes
+    (nothing changed between two snapshots) share one frozen file.
+    """
+    source = project.root / ".vp" / "db" / "index.db"
+    if not source.exists():
+        return None
+    digest = sha256_file(source)
+    target = _dbs_dir(project) / f"{digest}.db"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        shutil.copy2(source, target)
+    return digest
+
+
+def open_snapshot(project: Project, version: str) -> Project:
+    """Return a read-only view of the project as it was at ``version``.
+
+    The view shares the project's root and object store (so images resolve from
+    the shared CAS) but swaps in the frozen index and the snapshot's class list,
+    so export/stats stream from that exact state without touching the live one.
+    """
+    payload = load_snapshot(project, version)
+    index_db_hash = payload.get("index_db_hash")
+    if not index_db_hash:
+        raise VisionPackError(
+            f"Snapshot {version} predates restorable snapshots (no frozen index). "
+            "Re-create it with `vp snapshot create` to export from it."
+        )
+    db_path = _dbs_dir(project) / f"{index_db_hash}.db"
+    if not db_path.exists():
+        raise FileNotFoundError(f"Frozen snapshot index missing: {index_db_hash}")
+
+    from visionpack.index.sqlite_index import SqliteIndex
+
+    view = copy.copy(project)
+    view.index = SqliteIndex(project.root, db_path=db_path)
+    inventory = payload.get("inventory") or {}
+    view.manifest = replace(project.manifest, classes=[ClassDef.from_dict(c) for c in inventory.get("classes", [])])
+    return view
 
 
 def _inventory(project: Project) -> dict[str, Any]:

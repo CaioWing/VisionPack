@@ -8,6 +8,7 @@ from visionpack.formats.classification import export_imagefolder
 from visionpack.formats.coco import export_coco
 from visionpack.formats.yolo import export_yolo
 from visionpack.progress import cli_progress
+from visionpack.snapshot import open_snapshot
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -21,11 +22,17 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=None,
         help="Export into train/val/test using a split (defaults to 'default' when given without a value)",
     )
+    parser.add_argument(
+        "--snapshot",
+        help="Export the dataset as it was at this snapshot version (e.g. v2) instead of the current state",
+    )
     parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace) -> int:
     project = Project.open(".")
+    if args.snapshot:
+        project = open_snapshot(project, args.snapshot)
     output = Path(args.output)
     with cli_progress(f"Exporting {args.format}") as callback:
         if args.format == "coco":

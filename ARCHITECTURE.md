@@ -148,6 +148,17 @@ instance segmentation (polygons) and keypoints come through COCO, selected by th
 project task. Stats, splits, and validation are geometry-agnostic (they key on
 `class_id`), so they work across tasks unchanged.
 
+### Snapshots & time-travel (`snapshot.py`)
+`vp snapshot create` records an immutable version (hashes + stats + lineage) and
+**freezes the index** as a content-addressed SQLite db under
+`.vp/snapshots/dbs/<hash>.db` (an unchanged index is frozen once and shared).
+`vp export --snapshot vN` opens that frozen index as a read-only view and streams
+from it — so you can materialize training sets from any past version without
+touching the live state. Images are referenced from the shared CAS, never copied,
+so the per-snapshot cost is just the index (MBs), not the images (GBs). `vp diff`
+compares two snapshots' inventories. (At scale with many snapshots, per-record
+content-addressing of annotations would dedup further — a future step.)
+
 ### Packing (`packing/`)
 `archive` produces a self-contained `.tar.zst` (manifest + index + snapshots +
 assets + metadata). `training` produces split-aware WebDataset shards
