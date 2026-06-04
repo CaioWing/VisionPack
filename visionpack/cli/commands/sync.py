@@ -43,8 +43,10 @@ def run(args: argparse.Namespace) -> int:
 
     summaries = sync_sources(project, args.source)
     total_added = 0
+    total_failures = 0
     for summary in summaries:
         total_added += summary.assets_added
+        total_failures += len(summary.failures)
         print(
             f"[{summary.name}] +{summary.assets_added} new assets "
             f"({summary.assets_existing} already present), "
@@ -56,5 +58,11 @@ def run(args: argparse.Namespace) -> int:
             print(f"  warning: {summary.images_without_label} images had no matching label")
         if summary.labels_without_image:
             print(f"  warning: {summary.labels_without_image} labels had no matching image")
+        if summary.failures:
+            print(f"  skipped {len(summary.failures)} unreadable/corrupt image(s):")
+            for failure in summary.failures[:10]:
+                print(f"    - {failure.path}: {failure.error}")
+            if len(summary.failures) > 10:
+                print(f"    ... {len(summary.failures) - 10} more")
     print(f"Synced {len(summaries)} source(s): {total_added} new assets total.")
-    return 0
+    return 1 if total_failures else 0

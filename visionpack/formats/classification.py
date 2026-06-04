@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from visionpack.core.errors import FormatError
+from visionpack.core.errors import FormatError, VisionPackError
 from visionpack.core.models import Annotation, Asset, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
-from visionpack.formats.base import ImportSummary
+from visionpack.formats.base import ImportSummary, IngestFailure
 from visionpack.media import image_info_from_bytes, is_image_path
 from visionpack.perceptual import dhash_bytes
 from visionpack.storage.hash import sha256_bytes
@@ -59,8 +59,19 @@ class ImageFolderImporter:
                     tasks.append((path, class_id))
 
         summary = ImportSummary(classes_added=classes_added)
+
+        def process(item: tuple[Path, str]) -> _ProcessedImage | IngestFailure:
+            try:
+                return self._process_image(*item)
+            except (VisionPackError, OSError) as exc:
+                return IngestFailure(path=str(item[0]), error=str(exc))
+
         with ThreadPoolExecutor() as pool:
-            for processed in pool.map(lambda item: self._process_image(*item), tasks):
+            for outcome in pool.map(process, tasks):
+                if isinstance(outcome, IngestFailure):
+                    summary.failures.append(outcome)
+                    continue
+                processed = outcome
                 self.project.index.upsert_asset(processed.asset)
                 self.project.index.upsert_annotation(processed.annotation)
                 summary.assets += 1

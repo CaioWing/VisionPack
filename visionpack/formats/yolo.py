@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from visionpack.core.errors import FormatError
+from visionpack.core.errors import FormatError, VisionPackError
 from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
-from visionpack.formats.base import ImportSummary
+from visionpack.formats.base import ImportSummary, IngestFailure
 from visionpack.media import is_image_path, image_info_from_bytes
 from visionpack.perceptual import dhash_bytes
 from visionpack.split import resolve_export_sets
@@ -50,8 +50,18 @@ class YoloImporter:
         # I/O-bound, so fan them out across threads. Index mutation stays on the
         # calling thread, and ThreadPoolExecutor.map preserves input order so the
         # resulting index is deterministic regardless of worker scheduling.
+        def process(path: Path) -> _ProcessedImage | IngestFailure:
+            try:
+                return self._process_image(path, image_root)
+            except (VisionPackError, OSError) as exc:  # corrupt/unreadable image, missing file
+                return IngestFailure(path=str(path), error=str(exc))
+
         with ThreadPoolExecutor() as pool:
-            for processed in pool.map(lambda path: self._process_image(path, image_root), images):
+            for outcome in pool.map(process, images):
+                if isinstance(outcome, IngestFailure):
+                    summary.failures.append(outcome)
+                    continue
+                processed = outcome
                 self.project.index.upsert_asset(processed.asset)
                 summary.assets += 1
                 if processed.annotation is not None:

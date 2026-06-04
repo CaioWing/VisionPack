@@ -64,7 +64,19 @@ def run(args: argparse.Namespace) -> int:
         recorded = _record_source(project, args)
         if recorded:
             print(f"Recorded source {recorded!r} in visionpack.yaml (re-pull later with `vp sync --source {recorded}`)")
+
+    if summary.failures:
+        _report_failures(summary.failures)
+        return 1
     return 0
+
+
+def _report_failures(failures: list) -> None:
+    print(f"Skipped {len(failures)} unreadable/corrupt image(s):")
+    for failure in failures[:20]:
+        print(f"  - {failure.path}: {failure.error}")
+    if len(failures) > 20:
+        print(f"  ... {len(failures) - 20} more")
 
 
 def _record_source(project: Project, args: argparse.Namespace) -> str | None:

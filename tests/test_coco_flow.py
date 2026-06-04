@@ -68,15 +68,17 @@ class CocoFlowTest(unittest.TestCase):
             bboxes = sorted(ann["bbox"] for ann in document["annotations"])
             self.assertEqual(bboxes, [[20.0, 30.0, 60.0, 40.0], [100.0, 10.0, 50.0, 50.0]])
 
-    def test_missing_image_file_is_actionable(self) -> None:
+    def test_missing_image_file_is_skipped_and_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             project = Project.init(root, name="coco-demo")
             annotations_path, images_dir = _write_coco_fixture(root)
-            (images_dir / "img001.jpg").unlink()
-            with self.assertRaises(Exception) as ctx:
-                CocoImporter(project, annotations_path, images_dir).run()
-            self.assertIn("img001.jpg", str(ctx.exception))
+            (images_dir / "img001.jpg").unlink()  # the only image is now missing
+            summary = CocoImporter(project, annotations_path, images_dir).run()
+            # Reported as a skipped failure rather than raising and aborting.
+            self.assertEqual(summary.assets, 0)
+            self.assertEqual(len(summary.failures), 1)
+            self.assertIn("img001.jpg", summary.failures[0].error)
 
 
 if __name__ == "__main__":

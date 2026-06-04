@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from visionpack.core.errors import FormatError
+from visionpack.core.errors import FormatError, VisionPackError
 from visionpack.core.manifest import class_id_from_name
 from visionpack.core.models import Annotation, Asset, BBox, Geometry, Keypoints, ObjectAnnotation, Polygon, utc_now
 from visionpack.core.project import Project
-from visionpack.formats.base import ImportSummary
+from visionpack.formats.base import ImportSummary, IngestFailure
 from visionpack.media import image_info_from_bytes
 from visionpack.perceptual import dhash_bytes
 from visionpack.split import resolve_export_sets
@@ -59,11 +59,18 @@ class CocoImporter:
         images = document.get("images", [])
         summary = ImportSummary(classes_added=classes_added)
 
-        def process(image_record: dict[str, Any]) -> _ProcessedImage:
-            return self._process_image(image_record, annotations_by_image, category_to_class_id)
+        def process(image_record: dict[str, Any]) -> _ProcessedImage | IngestFailure:
+            try:
+                return self._process_image(image_record, annotations_by_image, category_to_class_id)
+            except (VisionPackError, OSError) as exc:
+                return IngestFailure(path=str(image_record.get("file_name", image_record.get("id"))), error=str(exc))
 
         with ThreadPoolExecutor() as pool:
-            for processed in pool.map(process, images):
+            for outcome in pool.map(process, images):
+                if isinstance(outcome, IngestFailure):
+                    summary.failures.append(outcome)
+                    continue
+                processed = outcome
                 self.project.index.upsert_asset(processed.asset)
                 summary.assets += 1
                 if processed.annotation is not None:

@@ -7,6 +7,7 @@ from pathlib import Path
 from visionpack.core.errors import FormatError, VisionPackError
 from visionpack.core.models import Annotation, Asset, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
+from visionpack.formats.base import IngestFailure
 from visionpack.formats.yolo import parse_yolo_label_text
 from visionpack.media import IMAGE_EXTENSIONS, image_info_from_bytes
 from visionpack.perceptual import dhash_bytes
@@ -45,6 +46,7 @@ class SourceSyncSummary:
     classes_added: int = 0
     images_without_label: int = 0
     labels_without_image: int = 0
+    failures: list[IngestFailure] = field(default_factory=list)
 
 
 class SourceSyncer:
@@ -124,14 +126,21 @@ class SourceSyncer:
         # per-image and I/O-bound, so fan them out across threads (matching
         # YoloImporter). Index mutation stays on this thread; pool.map preserves
         # input order, so the result is deterministic regardless of scheduling.
-        def process(pair: tuple[FileRef, FileRef | None]) -> tuple[Asset, Annotation | None, int]:
+        def process(pair: tuple[FileRef, FileRef | None]) -> tuple[Asset, Annotation | None, int] | IngestFailure:
             image_ref, label_ref = pair
-            label_text = label_res.read_bytes(label_ref.uri).decode("utf-8") if label_ref else None
-            origin = label_ref.uri if label_ref else None
-            return self._ingest(image_ref, image_res, label_text, origin, index_to_class_id)
+            try:
+                label_text = label_res.read_bytes(label_ref.uri).decode("utf-8") if label_ref else None
+                origin = label_ref.uri if label_ref else None
+                return self._ingest(image_ref, image_res, label_text, origin, index_to_class_id)
+            except (VisionPackError, OSError) as exc:
+                return IngestFailure(path=image_ref.uri, error=str(exc))
 
         with ThreadPoolExecutor() as pool:
-            for asset, annotation, object_count in pool.map(process, result.pairs):
+            for outcome in pool.map(process, result.pairs):
+                if isinstance(outcome, IngestFailure):
+                    summary.failures.append(outcome)
+                    continue
+                asset, annotation, object_count = outcome
                 self.project.index.upsert_asset(asset)
                 if asset.id in existing_ids:
                     summary.assets_existing += 1
@@ -275,6 +284,7 @@ class SourceSyncer:
             annotations=result.annotations,
             objects=result.objects,
             classes_added=result.classes_added,
+            failures=result.failures,
         )
 
     # -- ImageFolder (classification) -----------------------------------------
@@ -325,6 +335,7 @@ class SourceSyncer:
             annotations=result.annotations,
             objects=result.objects,
             classes_added=result.classes_added,
+            failures=result.failures,
         )
 
     # -- shared ---------------------------------------------------------------
