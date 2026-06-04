@@ -15,6 +15,7 @@ from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary, IngestFailure
 from visionpack.media import image_info_from_bytes
 from visionpack.perceptual import dhash_bytes
+from visionpack.progress import ProgressCallback
 from visionpack.split import resolve_export_sets
 from visionpack.storage.hash import sha256_bytes
 from visionpack.storage.object_store import CopyMode
@@ -36,7 +37,7 @@ class CocoImporter:
         self.images_dir = images_dir.resolve()
         self.copy_mode = copy_mode
 
-    def run(self) -> ImportSummary:
+    def run(self, progress: ProgressCallback | None = None) -> ImportSummary:
         if not self.source.exists():
             raise FormatError(f"COCO annotation file does not exist: {self.source}")
         if not self.images_dir.exists():
@@ -65,18 +66,21 @@ class CocoImporter:
             except (VisionPackError, OSError) as exc:
                 return IngestFailure(path=str(image_record.get("file_name", image_record.get("id"))), error=str(exc))
 
+        total = len(images)
         with ThreadPoolExecutor() as pool:
-            for outcome in pool.map(process, images):
+            for done, outcome in enumerate(pool.map(process, images), 1):
                 if isinstance(outcome, IngestFailure):
                     summary.failures.append(outcome)
-                    continue
-                processed = outcome
-                self.project.index.upsert_asset(processed.asset)
-                summary.assets += 1
-                if processed.annotation is not None:
-                    self.project.index.upsert_annotation(processed.annotation)
-                    summary.annotations += 1
-                    summary.objects += processed.object_count
+                else:
+                    processed = outcome
+                    self.project.index.upsert_asset(processed.asset)
+                    summary.assets += 1
+                    if processed.annotation is not None:
+                        self.project.index.upsert_annotation(processed.annotation)
+                        summary.annotations += 1
+                        summary.objects += processed.object_count
+                if progress is not None:
+                    progress(done, total)
 
         self.project.index.add_import_record(
             {
@@ -153,7 +157,9 @@ class CocoImporter:
         return _ProcessedImage(asset=asset, annotation=annotation, object_count=len(objects))
 
 
-def export_coco(project: Project, output: Path, split_id: str | None = None) -> dict[str, Any]:
+def export_coco(
+    project: Project, output: Path, split_id: str | None = None, progress: ProgressCallback | None = None
+) -> dict[str, Any]:
     """Export to COCO instances JSON.
 
     Without ``split_id`` a single ``annotations.json`` plus a flat ``images/``
@@ -175,7 +181,12 @@ def export_coco(project: Project, output: Path, split_id: str | None = None) -> 
     exported_objects = 0
     skipped = 0
 
+    total = project.index.count_assets()
+    done = 0
     for asset, annotation in project.index.iter_assets_with_annotations():
+        done += 1
+        if progress is not None:
+            progress(done, total)
         set_name = set_for_asset(asset.id)
         if set_name is None:
             skipped += 1

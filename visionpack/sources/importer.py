@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from visionpack.formats.base import IngestFailure
 from visionpack.formats.yolo import parse_yolo_label_text
 from visionpack.media import IMAGE_EXTENSIONS, image_info_from_bytes
 from visionpack.perceptual import dhash_bytes
+from visionpack.progress import ProgressCallback
 from visionpack.sources.join import join_refs
 from visionpack.sources.resolver import FileRef, Resolver, get_resolver, scheme_of
 from visionpack.sources.schema import Location, Source
@@ -82,12 +85,12 @@ class SourceSyncer:
             return self._plan_coco(plan, images, image_res, labels_loc)
         return self._plan_yolo(plan, images, labels_loc)
 
-    def run(self) -> SourceSyncSummary:
+    def run(self, progress: ProgressCallback | None = None) -> SourceSyncSummary:
         if self.source.format == "coco":
-            return self._run_coco()
+            return self._run_coco(progress)
         if self.source.format == "imagefolder":
-            return self._run_imagefolder()
-        return self._run_yolo()
+            return self._run_imagefolder(progress)
+        return self._run_yolo(progress)
 
     # -- YOLO -----------------------------------------------------------------
 
@@ -102,7 +105,7 @@ class SourceSyncer:
         plan.labels_without_image = len(result.labels_without_image)
         return plan
 
-    def _run_yolo(self) -> SourceSyncSummary:
+    def _run_yolo(self, progress: ProgressCallback | None = None) -> SourceSyncSummary:
         images_loc, labels_loc = self._locations()
         image_res = get_resolver(images_loc.resolved_uri())
         images = image_res.list_files(images_loc.resolved_uri(), IMAGE_EXTENSIONS)
@@ -135,22 +138,25 @@ class SourceSyncer:
             except (VisionPackError, OSError) as exc:
                 return IngestFailure(path=image_ref.uri, error=str(exc))
 
+        total = len(result.pairs)
         with ThreadPoolExecutor() as pool:
-            for outcome in pool.map(process, result.pairs):
+            for done, outcome in enumerate(pool.map(process, result.pairs), 1):
                 if isinstance(outcome, IngestFailure):
                     summary.failures.append(outcome)
-                    continue
-                asset, annotation, object_count = outcome
-                self.project.index.upsert_asset(asset)
-                if asset.id in existing_ids:
-                    summary.assets_existing += 1
                 else:
-                    summary.assets_added += 1
-                    existing_ids.add(asset.id)
-                if annotation is not None:
-                    self.project.index.upsert_annotation(annotation)
-                    summary.annotations += 1
-                    summary.objects += object_count
+                    asset, annotation, object_count = outcome
+                    self.project.index.upsert_asset(asset)
+                    if asset.id in existing_ids:
+                        summary.assets_existing += 1
+                    else:
+                        summary.assets_added += 1
+                        existing_ids.add(asset.id)
+                    if annotation is not None:
+                        self.project.index.upsert_annotation(annotation)
+                        summary.annotations += 1
+                        summary.objects += object_count
+                if progress is not None:
+                    progress(done, total)
 
         self._record(summary, images_loc, labels_loc)
         return summary
@@ -259,7 +265,7 @@ class SourceSyncer:
         plan.class_names = [str(cat.get("name", cat["id"])) for cat in document.get("categories", [])]
         return plan
 
-    def _run_coco(self) -> SourceSyncSummary:
+    def _run_coco(self, progress: ProgressCallback | None = None) -> SourceSyncSummary:
         from visionpack.formats.coco import CocoImporter
 
         images_loc, labels_loc = self._locations()
@@ -275,7 +281,7 @@ class SourceSyncer:
                 "(remote COCO arrives with the fsspec backends in Phase 2)."
             )
         before = {asset.id for asset in self.project.index.assets()}
-        result = CocoImporter(self.project, labels_path, images_path, copy_mode=self.source.copy).run()
+        result = CocoImporter(self.project, labels_path, images_path, copy_mode=self.source.copy).run(progress)
         added = self._tag_provenance(before)
         return SourceSyncSummary(
             name=self.source.name,
@@ -314,7 +320,7 @@ class SourceSyncer:
             class_names=[self._remap(index, name) for index, name in enumerate(class_names)],
         )
 
-    def _run_imagefolder(self) -> SourceSyncSummary:
+    def _run_imagefolder(self, progress: ProgressCallback | None = None) -> SourceSyncSummary:
         from visionpack.formats.classification import ImageFolderImporter
 
         root = self._imagefolder_root()
@@ -326,7 +332,7 @@ class SourceSyncer:
                 "(remote backends arrive with fsspec in Phase 2)."
             )
         before = {asset.id for asset in self.project.index.assets()}
-        result = ImageFolderImporter(self.project, root_path, copy_mode=self.source.copy).run()
+        result = ImageFolderImporter(self.project, root_path, copy_mode=self.source.copy).run(progress)
         added = self._tag_provenance(before)
         return SourceSyncSummary(
             name=self.source.name,
@@ -458,8 +464,22 @@ def _infer_class_names(labels: list[FileRef], label_res: Resolver | None) -> lis
     return [f"class_{index}" for index in range(max_class + 1)]
 
 
-def sync_sources(project: Project, source_name: str | None = None) -> list[SourceSyncSummary]:
-    return [SourceSyncer(project, source).run() for source in _select_sources(project, source_name)]
+def sync_sources(
+    project: Project,
+    source_name: str | None = None,
+    progress_factory: "Callable[[str], AbstractContextManager[ProgressCallback | None]] | None" = None,
+) -> list[SourceSyncSummary]:
+    """Sync the declared sources. ``progress_factory`` (e.g. ``cli_progress``)
+    yields a fresh progress callback per source so each gets its own bar."""
+    summaries: list[SourceSyncSummary] = []
+    for source in _select_sources(project, source_name):
+        syncer = SourceSyncer(project, source)
+        if progress_factory is None:
+            summaries.append(syncer.run())
+        else:
+            with progress_factory(f"Syncing {source.name}") as callback:
+                summaries.append(syncer.run(callback))
+    return summaries
 
 
 def plan_sources(project: Project, source_name: str | None = None) -> list[SourcePlan]:

@@ -189,6 +189,12 @@ class SqliteIndex:
             self._annotation_by_asset = {item.asset_id: item for item in self.annotations()}
         return self._annotation_by_asset.get(asset_id)
 
+    def count_assets(self) -> int:
+        if self._dirty_assets or self._assets is not None:
+            return len(self.assets())
+        with closing(self._connect()) as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0])
+
     # -- streaming reads ------------------------------------------------------
     #
     # These iterate rows straight off a DB cursor so a full-scan command never has

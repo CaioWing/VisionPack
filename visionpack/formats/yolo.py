@@ -12,6 +12,7 @@ from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary, IngestFailure
 from visionpack.media import is_image_path, image_info_from_bytes
 from visionpack.perceptual import dhash_bytes
+from visionpack.progress import ProgressCallback
 from visionpack.split import resolve_export_sets
 from visionpack.storage.hash import sha256_bytes
 from visionpack.storage.object_store import CopyMode
@@ -31,7 +32,7 @@ class YoloImporter:
         self.source = source.resolve()
         self.copy_mode = copy_mode
 
-    def run(self) -> ImportSummary:
+    def run(self, progress: ProgressCallback | None = None) -> ImportSummary:
         if not self.source.exists():
             raise FormatError(f"YOLO source does not exist: {self.source}")
         image_root = self.source if self.source.is_dir() else self.source.parent
@@ -56,19 +57,22 @@ class YoloImporter:
             except (VisionPackError, OSError) as exc:  # corrupt/unreadable image, missing file
                 return IngestFailure(path=str(path), error=str(exc))
 
+        total = len(images)
         with ThreadPoolExecutor() as pool:
-            for outcome in pool.map(process, images):
+            for done, outcome in enumerate(pool.map(process, images), 1):
                 if isinstance(outcome, IngestFailure):
                     summary.failures.append(outcome)
-                    continue
-                processed = outcome
-                self.project.index.upsert_asset(processed.asset)
-                summary.assets += 1
-                if processed.annotation is not None:
-                    matched_label_files.add(processed.label_path)  # type: ignore[arg-type]
-                    self.project.index.upsert_annotation(processed.annotation)
-                    summary.annotations += 1
-                    summary.objects += processed.object_count
+                else:
+                    processed = outcome
+                    self.project.index.upsert_asset(processed.asset)
+                    summary.assets += 1
+                    if processed.annotation is not None:
+                        matched_label_files.add(processed.label_path)  # type: ignore[arg-type]
+                        self.project.index.upsert_annotation(processed.annotation)
+                        summary.annotations += 1
+                        summary.objects += processed.object_count
+                if progress is not None:
+                    progress(done, total)
 
         orphan_labels = [str(path) for path in label_files if path not in matched_label_files]
         self.project.index.set_orphan_labels(orphan_labels)
@@ -127,7 +131,9 @@ class YoloImporter:
         return _ProcessedImage(asset=asset, annotation=annotation, object_count=object_count, label_path=label_path)
 
 
-def export_yolo(project: Project, output: Path, split_id: str | None = None) -> dict[str, Any]:
+def export_yolo(
+    project: Project, output: Path, split_id: str | None = None, progress: ProgressCallback | None = None
+) -> dict[str, Any]:
     """Export to the YOLO layout.
 
     Without ``split_id`` everything goes to flat ``images/`` and ``labels/``
@@ -147,7 +153,12 @@ def export_yolo(project: Project, output: Path, split_id: str | None = None) -> 
     per_set: dict[str, int] = {name: 0 for name in set_names}
     skipped = 0
 
+    total = project.index.count_assets()
+    done = 0
     for asset, annotation in project.index.iter_assets_with_annotations():
+        done += 1
+        if progress is not None:
+            progress(done, total)
         set_name = set_for_asset(asset.id)
         if set_name is None:
             skipped += 1

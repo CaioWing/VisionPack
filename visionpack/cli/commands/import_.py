@@ -7,6 +7,7 @@ from pathlib import Path
 from visionpack.core.errors import VisionPackError
 from visionpack.core.lock import project_lock
 from visionpack.core.project import Project
+from visionpack.progress import cli_progress
 from visionpack.formats.classification import ImageFolderImporter
 from visionpack.formats.coco import CocoImporter
 from visionpack.formats.yolo import YoloImporter
@@ -48,14 +49,17 @@ def _run_locked(project: Project, args: argparse.Namespace) -> int:
     if args.format == "coco":
         if not args.images:
             raise VisionPackError("--images is required when importing COCO (the directory holding the image files)")
-        summary = CocoImporter(project, Path(args.source), Path(args.images), copy_mode=args.copy).run()
+        importer = CocoImporter(project, Path(args.source), Path(args.images), copy_mode=args.copy)
         label = "COCO"
     elif args.format == "imagefolder":
-        summary = ImageFolderImporter(project, Path(args.source), copy_mode=args.copy).run()
+        importer = ImageFolderImporter(project, Path(args.source), copy_mode=args.copy)
         label = "ImageFolder"
     else:
-        summary = YoloImporter(project, Path(args.source), copy_mode=args.copy).run()
+        importer = YoloImporter(project, Path(args.source), copy_mode=args.copy)
         label = "YOLO"
+
+    with cli_progress(f"Importing {label}") as callback:
+        summary = importer.run(progress=callback)
 
     print(
         f"Imported {label} dataset: "

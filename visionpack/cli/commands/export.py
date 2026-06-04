@@ -7,6 +7,7 @@ from visionpack.core.project import Project
 from visionpack.formats.classification import export_imagefolder
 from visionpack.formats.coco import export_coco
 from visionpack.formats.yolo import export_yolo
+from visionpack.progress import cli_progress
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -26,17 +27,19 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 def run(args: argparse.Namespace) -> int:
     project = Project.open(".")
     output = Path(args.output)
-    if args.format == "coco":
-        summary = export_coco(project, output, split_id=args.split)
-        detail = f"{summary['images']} images, {summary['annotations']} annotations, {summary['objects']} objects"
-        print(f"Exported COCO dataset to {output.resolve()}: {detail}")
-    elif args.format == "imagefolder":
-        summary = export_imagefolder(project, output, split_id=args.split)
-        print(f"Exported ImageFolder dataset to {output.resolve()}: {summary['images']} images")
-    else:
-        summary = export_yolo(project, output, split_id=args.split)
-        detail = f"{summary['images']} images, {summary['labels']} label files, {summary['objects']} objects"
-        print(f"Exported YOLO dataset to {output.resolve()}: {detail}")
+    with cli_progress(f"Exporting {args.format}") as callback:
+        if args.format == "coco":
+            summary = export_coco(project, output, split_id=args.split, progress=callback)
+            detail = f"{summary['images']} images, {summary['annotations']} annotations, {summary['objects']} objects"
+            message = f"Exported COCO dataset to {output.resolve()}: {detail}"
+        elif args.format == "imagefolder":
+            summary = export_imagefolder(project, output, split_id=args.split, progress=callback)
+            message = f"Exported ImageFolder dataset to {output.resolve()}: {summary['images']} images"
+        else:
+            summary = export_yolo(project, output, split_id=args.split, progress=callback)
+            detail = f"{summary['images']} images, {summary['labels']} label files, {summary['objects']} objects"
+            message = f"Exported YOLO dataset to {output.resolve()}: {detail}"
+    print(message)
 
     if args.split:
         sets = ", ".join(f"{name}={count}" for name, count in summary.get("sets", {}).items())

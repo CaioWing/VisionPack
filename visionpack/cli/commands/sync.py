@@ -4,6 +4,7 @@ import argparse
 
 from visionpack.core.lock import project_lock
 from visionpack.core.project import Project
+from visionpack.progress import cli_progress
 from visionpack.sources import plan_sources, sync_sources
 
 
@@ -43,7 +44,7 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     with project_lock(project.root):
-        summaries = sync_sources(project, args.source)
+        summaries = sync_sources(project, args.source, progress_factory=cli_progress)
     total_added = 0
     total_failures = 0
     for summary in summaries:

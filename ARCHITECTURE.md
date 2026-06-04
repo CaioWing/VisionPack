@@ -156,6 +156,22 @@ with a self-describing `dataset.json`.
 
 ---
 
+## Production robustness
+
+- **Resilient ingest.** Import and sync capture per-image failures (corrupt /
+  unreadable / missing) as `IngestFailure` instead of aborting the batch; good
+  images still import, the skipped ones are reported, and the command exits
+  non-zero so CI can gate on it.
+- **Project lock.** Mutating commands take an OS advisory lock on `.vp/lock`
+  (`core/lock.py`; fcntl/msvcrt), so a second concurrent writer fails fast instead
+  of racing and losing updates. Released automatically if the process dies.
+- **`vp fsck`.** Verifies index↔store integrity (missing objects, orphan
+  annotations/splits, missing snapshot blobs, orphan objects); `--deep` re-hashes
+  every object to catch silent corruption.
+- **Progress.** Long operations (import/sync/export) render a rich progress bar
+  via a callback (`progress.py`), but only on an interactive terminal — piped/CI
+  runs stay quiet. The core stays UI-free; the callback is optional.
+
 ## Testing
 
 `unittest` suite under `tests/` (55 tests). Run with:

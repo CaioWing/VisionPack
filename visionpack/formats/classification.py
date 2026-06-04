@@ -11,6 +11,7 @@ from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary, IngestFailure
 from visionpack.media import image_info_from_bytes, is_image_path
 from visionpack.perceptual import dhash_bytes
+from visionpack.progress import ProgressCallback
 from visionpack.storage.hash import sha256_bytes
 from visionpack.storage.object_store import CopyMode
 
@@ -34,7 +35,7 @@ class ImageFolderImporter:
         self.source = source.resolve()
         self.copy_mode = copy_mode
 
-    def run(self) -> ImportSummary:
+    def run(self, progress: ProgressCallback | None = None) -> ImportSummary:
         if not self.source.exists() or not self.source.is_dir():
             raise FormatError(
                 f"ImageFolder source must be a directory of class subfolders: {self.source}"
@@ -66,17 +67,20 @@ class ImageFolderImporter:
             except (VisionPackError, OSError) as exc:
                 return IngestFailure(path=str(item[0]), error=str(exc))
 
+        total = len(tasks)
         with ThreadPoolExecutor() as pool:
-            for outcome in pool.map(process, tasks):
+            for done, outcome in enumerate(pool.map(process, tasks), 1):
                 if isinstance(outcome, IngestFailure):
                     summary.failures.append(outcome)
-                    continue
-                processed = outcome
-                self.project.index.upsert_asset(processed.asset)
-                self.project.index.upsert_annotation(processed.annotation)
-                summary.assets += 1
-                summary.annotations += 1
-                summary.objects += 1
+                else:
+                    processed = outcome
+                    self.project.index.upsert_asset(processed.asset)
+                    self.project.index.upsert_annotation(processed.annotation)
+                    summary.assets += 1
+                    summary.annotations += 1
+                    summary.objects += 1
+                if progress is not None:
+                    progress(done, total)
 
         self.project.index.add_import_record(
             {
@@ -124,7 +128,9 @@ class ImageFolderImporter:
         return _ProcessedImage(asset=asset, annotation=annotation)
 
 
-def export_imagefolder(project: Project, output: Path, split_id: str | None = None) -> dict[str, Any]:
+def export_imagefolder(
+    project: Project, output: Path, split_id: str | None = None, progress: ProgressCallback | None = None
+) -> dict[str, Any]:
     """Export a classification dataset to the ImageFolder layout.
 
     Writes ``<set>/<class>/<image>`` when a split is given, else ``<class>/<image>``.
@@ -141,7 +147,12 @@ def export_imagefolder(project: Project, output: Path, split_id: str | None = No
     exported = 0
     skipped = 0
     per_set: dict[str, int] = {}
+    total = project.index.count_assets()
+    done = 0
     for asset, annotation in project.index.iter_assets_with_annotations():
+        done += 1
+        if progress is not None:
+            progress(done, total)
         set_name = set_for_asset(asset.id)
         if set_name is None:
             skipped += 1
