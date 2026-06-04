@@ -10,7 +10,7 @@ from visionpack.formats.yolo import parse_yolo_label_text
 from visionpack.media import IMAGE_EXTENSIONS, image_info_from_bytes
 from visionpack.perceptual import dhash_bytes
 from visionpack.sources.join import join_refs
-from visionpack.sources.resolver import FileRef, Resolver, get_resolver
+from visionpack.sources.resolver import FileRef, Resolver, get_resolver, scheme_of
 from visionpack.sources.schema import Location, Source
 from visionpack.storage.hash import sha256_bytes
 
@@ -56,11 +56,15 @@ class SourceSyncer:
 
     def __init__(self, project: Project, source: Source) -> None:
         self.project = project
-        self.source = source
+        # Manifest paths are project-relative; resolve them against the project
+        # root (not the cwd) so `vp sync` works from any directory.
+        self.source = _rebase_source(source, project.root)
 
     # -- public ---------------------------------------------------------------
 
     def plan(self) -> SourcePlan:
+        if self.source.format == "imagefolder":
+            return self._plan_imagefolder()
         images_loc, labels_loc = self._locations()
         image_res = get_resolver(images_loc.resolved_uri())
         images = image_res.list_files(images_loc.resolved_uri(), IMAGE_EXTENSIONS)
@@ -78,14 +82,17 @@ class SourceSyncer:
     def run(self) -> SourceSyncSummary:
         if self.source.format == "coco":
             return self._run_coco()
+        if self.source.format == "imagefolder":
+            return self._run_imagefolder()
         return self._run_yolo()
 
     # -- YOLO -----------------------------------------------------------------
 
     def _plan_yolo(self, plan: SourcePlan, images: list[FileRef], labels_loc: Location | None) -> SourcePlan:
+        images_loc, _ = self._locations()
         labels, label_res = self._list_labels(labels_loc)
         plan.labels_found = len(labels)
-        plan.class_names = self._yolo_class_names(labels, labels_loc, label_res)
+        plan.class_names = self._yolo_class_names(labels, labels_loc, label_res, images_loc)
         result = join_refs(images, labels, self.source.match)
         plan.matched = sum(1 for _, label in result.pairs if label is not None)
         plan.images_without_label = result.images_without_label
@@ -98,7 +105,7 @@ class SourceSyncer:
         images = image_res.list_files(images_loc.resolved_uri(), IMAGE_EXTENSIONS)
         labels, label_res = self._list_labels(labels_loc)
 
-        class_names = self._yolo_class_names(labels, labels_loc, label_res)
+        class_names = self._yolo_class_names(labels, labels_loc, label_res, images_loc)
         classes_added = self.project.manifest.merge_classes(class_names)
         name_to_id = {item.name: item.id for item in self.project.manifest.classes}
         index_to_class_id = {index: name_to_id[name] for index, name in enumerate(class_names)}
@@ -175,10 +182,25 @@ class SourceSyncer:
             )
         return asset, annotation, object_count
 
-    def _yolo_class_names(self, labels: list[FileRef], labels_loc: Location | None, label_res: Resolver | None) -> list[str]:
+    def _yolo_class_names(
+        self,
+        labels: list[FileRef],
+        labels_loc: Location | None,
+        label_res: Resolver | None,
+        images_loc: Location | None = None,
+    ) -> list[str]:
         names = self._explicit_class_names()
-        if not names and labels_loc is not None and label_res is not None:
-            names = self._class_names_from_file(labels_loc, label_res)
+        if not names:
+            # classes.txt may sit at the source root, beside the images, or beside
+            # the labels (YoloImporter searches the root, so sync must too — else a
+            # root-level classes.txt is missed and class_N names get invented).
+            for loc in (self.source.root, images_loc, labels_loc):
+                if loc is None:
+                    continue
+                found = self._class_names_from_file(loc, get_resolver(loc.resolved_uri()))
+                if found:
+                    names = found
+                    break
         if not names:
             names = _infer_class_names(labels, label_res)
         return [self._remap(index, name) for index, name in enumerate(names)]
@@ -237,8 +259,57 @@ class SourceSyncer:
             )
         before = {asset.id for asset in self.project.index.assets()}
         result = CocoImporter(self.project, labels_path, images_path, copy_mode=self.source.copy).run()
-        after = self.project.index.assets()
-        added = sum(1 for asset in after if asset.id not in before)
+        added = self._tag_provenance(before)
+        return SourceSyncSummary(
+            name=self.source.name,
+            assets_added=added,
+            assets_existing=result.assets - added,
+            annotations=result.annotations,
+            objects=result.objects,
+            classes_added=result.classes_added,
+        )
+
+    # -- ImageFolder (classification) -----------------------------------------
+
+    def _imagefolder_root(self) -> Location:
+        root = self.source.root or self.source.images
+        if root is None:
+            raise VisionPackError(
+                f"ImageFolder source {self.source.name!r} must declare 'root' (the directory of class subfolders)."
+            )
+        return root
+
+    def _plan_imagefolder(self) -> SourcePlan:
+        root = self._imagefolder_root()
+        resolver = get_resolver(root.resolved_uri())
+        images = resolver.list_files(root.resolved_uri(), IMAGE_EXTENSIONS)
+        # The class is the first path segment under the root.
+        class_names = sorted({ref.relkey.split("/")[0] for ref in images if "/" in ref.relkey})
+        return SourcePlan(
+            name=self.source.name,
+            format="imagefolder",
+            images_uri=root.resolved_uri(),
+            labels_uri=None,
+            images_found=len(images),
+            labels_found=len(images),
+            matched=len(images),
+            class_names=[self._remap(index, name) for index, name in enumerate(class_names)],
+        )
+
+    def _run_imagefolder(self) -> SourceSyncSummary:
+        from visionpack.formats.classification import ImageFolderImporter
+
+        root = self._imagefolder_root()
+        resolver = get_resolver(root.resolved_uri())
+        root_path = resolver.local_path(root.resolved_uri())
+        if root_path is None:
+            raise VisionPackError(
+                f"ImageFolder source {self.source.name!r} currently supports a local root only "
+                "(remote backends arrive with fsspec in Phase 2)."
+            )
+        before = {asset.id for asset in self.project.index.assets()}
+        result = ImageFolderImporter(self.project, root_path, copy_mode=self.source.copy).run()
+        added = self._tag_provenance(before)
         return SourceSyncSummary(
             name=self.source.name,
             assets_added=added,
@@ -249,6 +320,24 @@ class SourceSyncer:
         )
 
     # -- shared ---------------------------------------------------------------
+
+    def _tag_provenance(self, before: set[str]) -> int:
+        """Stamp newly-added assets with this source's name and persist.
+
+        Importers don't know which declared source drove them, so the sync layer
+        records provenance after the fact for the assets this run introduced.
+        """
+        added = 0
+        for asset in self.project.index.assets():
+            if asset.id in before:
+                continue
+            added += 1
+            if asset.source != self.source.name:
+                asset.source = self.source.name
+                self.project.index.upsert_asset(asset)
+        if added:
+            self.project.index.save()
+        return added
 
     def _locations(self) -> tuple[Location, Location | None]:
         source = self.source
@@ -300,6 +389,38 @@ class SourceSyncer:
         self.project.index.save()
         if summary.classes_added:
             self.project.save_manifest()
+
+
+def _rebase_location(loc: Location | None, root: Path) -> Location | None:
+    """Make a local, relative location absolute against the project root."""
+    if loc is None:
+        return None
+    if loc.ref is None and scheme_of(loc.uri) in ("", "file"):
+        path = Path(loc.uri)
+        if not path.is_absolute():
+            return Location(
+                uri=str((root / path).resolve()),
+                ref=loc.ref,
+                path=loc.path,
+                region=loc.region,
+                credentials=loc.credentials,
+            )
+    return loc
+
+
+def _rebase_source(source: Source, root: Path) -> Source:
+    return Source(
+        name=source.name,
+        format=source.format,
+        images=_rebase_location(source.images, root),
+        labels=_rebase_location(source.labels, root),
+        classes=_rebase_location(source.classes, root),
+        match=source.match,
+        class_map=source.class_map,
+        copy=source.copy,
+        credentials=source.credentials,
+        root=_rebase_location(source.root, root),
+    )
 
 
 def _infer_class_names(labels: list[FileRef], label_res: Resolver | None) -> list[str]:

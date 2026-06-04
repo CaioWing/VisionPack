@@ -204,8 +204,40 @@ def read_manifest(path: Path) -> Manifest:
     return Manifest.from_dict(data)
 
 
+# Section order + a one-line comment for each, so the generated manifest reads as
+# documentation rather than a flat dump. name/version/task are rendered together
+# as the header; empty sections are skipped.
+_SECTION_COMMENTS: list[tuple[str, str]] = [
+    ("classes", "Classes. Merged by name across sources; ids are slugs."),
+    ("sources", "Sources: where images & labels come from. `vp sync` reconciles these."),
+    ("splits", "Train / val / test splits (vp split create)."),
+    ("validation", "Validation policy (vp validate)."),
+    ("exports", "Export options (vp export)."),
+    ("pack_profiles", "Pack profiles (vp pack --profile <name>)."),
+    ("storage", "Asset storage."),
+    ("annotation", "Annotation workflow."),
+]
+
+
 def write_manifest(path: Path, manifest: Manifest) -> None:
-    path.write_text(_dump_yaml(manifest.to_dict()), encoding="utf-8")
+    path.write_text(_render_manifest(manifest), encoding="utf-8")
+
+
+def _render_manifest(manifest: Manifest) -> str:
+    data = manifest.to_dict()
+    header = [
+        "# VisionPack dataset manifest. See ARCHITECTURE.md for the full schema.",
+        f"name: {_format_scalar(data['name'])}",
+        f"version: {_format_scalar(data['version'])}",
+        f"task: {_format_scalar(data['task'])}",
+    ]
+    blocks = ["\n".join(header)]
+    for key, comment in _SECTION_COMMENTS:
+        value = data.get(key)
+        if not value:
+            continue
+        blocks.append(f"# {comment}\n{_dump_yaml({key: value}).rstrip()}")
+    return "\n\n".join(blocks) + "\n"
 
 
 def _format_validation_error(exc: ValidationError) -> str:

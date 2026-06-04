@@ -82,6 +82,32 @@ uv run vp import ./raw --format yolo --copy reference
 
 Available copy modes are `copy`, `move`, `hardlink`, `reference`, and `ingest`.
 
+Each successful import is also recorded as a source in `visionpack.yaml`, so the
+manifest reflects where your data came from and you can re-pull it later with
+`vp sync`. Pass `--no-record` to skip this (for a one-off/throwaway import), or
+`--name` to control the recorded source name.
+
+## Multi-source sync
+
+Declare images and labels — even when they live in different folders or repos — in a
+`sources:` block and reconcile them with `vp sync`:
+
+```yaml
+sources:
+  - name: camera-A
+    format: yolo
+    images: ./repoA/images
+    labels: ./repoB
+    match: stem          # pair by filename; use `relpath` for parallel trees
+    copy: ingest
+```
+
+```bash
+uv run vp sync --dry-run   # preview found / matched / unmatched / classes per source
+uv run vp sync             # ingest; idempotent, records per-asset provenance
+uv run vp sync --source camera-A   # sync just one source
+```
+
 ## Validate
 
 Run validation:

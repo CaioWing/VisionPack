@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from visionpack.core.errors import VisionPackError
@@ -22,6 +23,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Override project task",
     )
     parser.add_argument("--copy", default="ingest", choices=["copy", "move", "hardlink", "reference", "ingest"], help="Asset copy mode")
+    parser.add_argument("--name", help="Name to record this source under in visionpack.yaml")
+    parser.add_argument(
+        "--no-record",
+        action="store_true",
+        help="Do not add this import as a source in visionpack.yaml (use for one-off/throwaway imports)",
+    )
     parser.add_argument("--class-map", help="Reserved for explicit class mapping files")
     parser.set_defaults(func=run)
 
@@ -52,4 +59,64 @@ def run(args: argparse.Namespace) -> int:
         print(f"Warnings: {summary.orphan_labels} label files had no matching image")
     if summary.classes_added:
         print("Classes were discovered and written to visionpack.yaml")
+
+    if not args.no_record:
+        recorded = _record_source(project, args)
+        if recorded:
+            print(f"Recorded source {recorded!r} in visionpack.yaml (re-pull later with `vp sync --source {recorded}`)")
     return 0
+
+
+def _record_source(project: Project, args: argparse.Namespace) -> str | None:
+    """Append this import as a declared source so the manifest stays the source of
+    truth and the data can be re-pulled with `vp sync`. Skips silently when an
+    equivalent source is already declared (re-importing the same path)."""
+    entry = _source_entry(project, args)
+    # Dedupe on location identity only: a reloaded source carries pydantic default
+    # keys (class_map/credentials={}) the fresh entry lacks, so compare the parts
+    # that actually identify where the data comes from.
+    identity = _identity(entry)
+    if any(_identity(declared) == identity for declared in project.manifest.sources):
+        return None
+    # name first for readability in the manifest
+    entry = {"name": _unique_name(project, args), **entry}
+    project.manifest.sources.append(entry)
+    project.save_manifest()
+    return entry["name"]
+
+
+def _identity(source: dict) -> tuple:
+    return (source.get("format"), source.get("root"), source.get("images"), source.get("labels"))
+
+
+def _source_entry(project: Project, args: argparse.Namespace) -> dict[str, str]:
+    if args.format == "coco":
+        return {
+            "format": "coco",
+            "images": _rel(project, args.images),
+            "labels": _rel(project, args.source),
+            "copy": args.copy,
+        }
+    fmt = "imagefolder" if args.format == "imagefolder" else "yolo"
+    return {"format": fmt, "root": _rel(project, args.source), "copy": args.copy}
+
+
+def _rel(project: Project, path: str) -> str:
+    """A project-relative, posix-style location, so the manifest stays portable."""
+    resolved = Path(path).resolve()
+    try:
+        rel = Path(os.path.relpath(resolved, project.root)).as_posix()
+    except ValueError:  # different drive on Windows
+        return resolved.as_posix()
+    return rel if rel.startswith((".", "/")) else f"./{rel}"
+
+
+def _unique_name(project: Project, args: argparse.Namespace) -> str:
+    base = Path(args.name or Path(args.source).stem or args.format).name or args.format
+    taken = {source.get("name") for source in project.manifest.sources}
+    if base not in taken:
+        return base
+    suffix = 2
+    while f"{base}-{suffix}" in taken:
+        suffix += 1
+    return f"{base}-{suffix}"

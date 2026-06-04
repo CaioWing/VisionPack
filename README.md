@@ -134,6 +134,10 @@ Classes from different sources merge **by name** (YOLO indices are mapped throug
 each source's own class order, never positionally), so reordered class lists don't
 mislabel your data.
 
+A one-off `vp import` also records what it imported as a source in
+`visionpack.yaml`, so the manifest stays the single source of truth and the data
+can be re-pulled later with `vp sync` (use `--no-record` for a throwaway import).
+
 ---
 
 ## What's in the box
