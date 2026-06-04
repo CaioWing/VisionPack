@@ -5,8 +5,9 @@ training models: turning scattered images and labels into a clean, versioned,
 leak-free, ready-to-train dataset.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
-![Tests](https://img.shields.io/badge/tests-55%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-79%20passing-brightgreen)
 
 ```bash
 vp init --name factory-defects --task detection
