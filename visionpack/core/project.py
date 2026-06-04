@@ -35,20 +35,16 @@ class Project:
         manifest_path = root_path / "visionpack.yaml"
         if not manifest_path.exists():
             write_manifest(manifest_path, Manifest.default(dataset_name, task))
+        # Git-like layout: the only things created up front are the manifest and
+        # the `.vp/` control directory. Output dirs (exports/, reports/) are made
+        # on demand by the commands that write them, so the project root stays
+        # clean and the manifest + index remain the single source of truth.
         for directory in [
             root_path / ".vp" / "db",
             root_path / ".vp" / "objects",
             root_path / ".vp" / "snapshots",
-            root_path / ".vp" / "cache",
-            root_path / ".vp" / "logs",
-            root_path / "assets",
-            root_path / "annotations",
-            root_path / "exports",
-            root_path / "reports",
         ]:
             directory.mkdir(parents=True, exist_ok=True)
-        _ensure_readme(root_path / "assets" / "README.md", "Raw or materialized dataset assets.")
-        _ensure_readme(root_path / "annotations" / "README.md", "Source annotation files and interchange exports.")
         project = cls(root_path)
         project.index.save()
         return project
@@ -73,8 +69,3 @@ def _find_manifest(start: Path) -> Path | None:
         if current.parent == current:
             return None
         current = current.parent
-
-
-def _ensure_readme(path: Path, content: str) -> None:
-    if not path.exists():
-        path.write_text(content + "\n", encoding="utf-8")

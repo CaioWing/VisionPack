@@ -32,18 +32,20 @@ Create a VisionPack project in the current directory:
 uv run vp init --name factory-defects --task detection
 ```
 
-This creates:
+This creates a git-like layout — just the manifest and a control directory:
 
 ```text
 visionpack.yaml
 .vp/
-assets/
-annotations/
-exports/
-reports/
+  db/          # local index (index.json)
+  objects/     # content-addressed assets (sha256)
+  snapshots/   # versioned snapshots
 ```
 
-The `visionpack.yaml` file is the declarative dataset manifest. The `.vp/` directory stores the local index, content-addressed objects, snapshots, cache, and logs.
+The `visionpack.yaml` file is the declarative dataset manifest and, together with
+the `.vp/` index, is the single source of truth. Output directories such as
+`exports/` and `reports/` are created on demand by the commands that write them, so
+the project root stays clean.
 
 ## Import A YOLO Dataset
 
