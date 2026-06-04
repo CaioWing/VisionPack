@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from visionpack.core.lock import project_lock
 from visionpack.core.project import Project
 from visionpack.split import create_split, lock_split
 
@@ -40,17 +41,18 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 def run_create(args: argparse.Namespace) -> int:
     project = Project.open(".")
-    split = create_split(
-        project,
-        train=args.train,
-        val=args.val,
-        test=args.test,
-        strategy=args.strategy,
-        seed=args.seed,
-        split_id=args.split_id,
-        by=args.by,
-        force=args.force,
-    )
+    with project_lock(project.root):
+        split = create_split(
+            project,
+            train=args.train,
+            val=args.val,
+            test=args.test,
+            strategy=args.strategy,
+            seed=args.seed,
+            split_id=args.split_id,
+            by=args.by,
+            force=args.force,
+        )
     sizes = ", ".join(f"{name}={len(ids)}" for name, ids in split.sets.items())
     print(f"Created split {split.id!r} (strategy={split.strategy}, seed={args.seed}): {sizes}")
     return 0
@@ -58,7 +60,8 @@ def run_create(args: argparse.Namespace) -> int:
 
 def run_lock(args: argparse.Namespace) -> int:
     project = Project.open(".")
-    split = lock_split(project, args.split_id)
+    with project_lock(project.root):
+        split = lock_split(project, args.split_id)
     print(f"Locked split {split.id!r}. It will be captured as-is in snapshots.")
     return 0
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
+from visionpack.core.lock import project_lock
 from visionpack.core.project import Project
 from visionpack.snapshot import create_snapshot, list_snapshots, load_snapshot
 
@@ -25,7 +26,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 def run_create(args: argparse.Namespace) -> int:
     project = Project.open(".")
-    snapshot = create_snapshot(project, args.message)
+    with project_lock(project.root):
+        snapshot = create_snapshot(project, args.message)
     print(f"Created snapshot {snapshot['version']}: {snapshot['message']}")
     return 0
 

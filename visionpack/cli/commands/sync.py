@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from visionpack.core.lock import project_lock
 from visionpack.core.project import Project
 from visionpack.sources import plan_sources, sync_sources
 
@@ -41,7 +42,8 @@ def run(args: argparse.Namespace) -> int:
             print(f"  classes: {', '.join(plan.class_names) if plan.class_names else '(none discovered)'}")
         return 0
 
-    summaries = sync_sources(project, args.source)
+    with project_lock(project.root):
+        summaries = sync_sources(project, args.source)
     total_added = 0
     total_failures = 0
     for summary in summaries:

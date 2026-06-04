@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from visionpack.core.errors import VisionPackError
+from visionpack.core.lock import project_lock
 from visionpack.core.project import Project
 from visionpack.formats.classification import ImageFolderImporter
 from visionpack.formats.coco import CocoImporter
@@ -35,6 +36,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 def run(args: argparse.Namespace) -> int:
     project = Project.open(".")
+    with project_lock(project.root):
+        return _run_locked(project, args)
+
+
+def _run_locked(project: Project, args: argparse.Namespace) -> int:
     if args.task and project.manifest.task != args.task:
         project.manifest.task = args.task
         project.save_manifest()
