@@ -42,6 +42,9 @@ def create_snapshot(project: Project, message: str) -> dict[str, Any]:
         "stats": collect_stats(project),
         "inventory_hash": inventory_hash,
         "index_db_hash": index_db_hash,
+        # Stored directly (small) so opening a snapshot doesn't need to load the
+        # whole inventory blob just to recover the class list.
+        "classes": [item.to_dict() for item in project.manifest.classes],
     }
     (snapshot_dir / f"{version}.json").write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return load_snapshot(project, version)
@@ -57,13 +60,18 @@ def list_snapshots(project: Project) -> list[dict[str, Any]]:
     return snapshots
 
 
-def load_snapshot(project: Project, version: str) -> dict[str, Any]:
+def _read_snapshot_file(project: Project, version: str) -> dict[str, Any]:
+    """Read the snapshot record (vN.json) without rehydrating the inventory blob."""
     path = project.root / ".vp" / "snapshots" / f"{version}.json"
     if not path.exists():
         raise FileNotFoundError(f"Snapshot not found: {version}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_snapshot(project: Project, version: str) -> dict[str, Any]:
+    payload = _read_snapshot_file(project, version)
     # Rehydrate the inventory from its blob unless an older snapshot still
-    # embeds it inline.
+    # embeds it inline. (Callers like diff/show need it; open_snapshot does not.)
     if "inventory" not in payload and "inventory_hash" in payload:
         payload["inventory"] = _load_inventory(project, payload["inventory_hash"])
     return payload
@@ -118,7 +126,9 @@ def open_snapshot(project: Project, version: str) -> Project:
     the shared CAS) but swaps in the frozen index and the snapshot's class list,
     so export/stats stream from that exact state without touching the live one.
     """
-    payload = load_snapshot(project, version)
+    # Light read: don't rehydrate the inventory blob (it can be tens of MB at
+    # 100k+); everything open needs is in the small payload.
+    payload = _read_snapshot_file(project, version)
     index_db_hash = payload.get("index_db_hash")
     if not index_db_hash:
         raise VisionPackError(
@@ -129,12 +139,16 @@ def open_snapshot(project: Project, version: str) -> Project:
     if not db_path.exists():
         raise FileNotFoundError(f"Frozen snapshot index missing: {index_db_hash}")
 
+    classes_data = payload.get("classes")
+    if classes_data is None:  # older snapshot: classes only live in the inventory blob
+        inventory = _load_inventory(project, payload["inventory_hash"]) if payload.get("inventory_hash") else {}
+        classes_data = inventory.get("classes", [])
+
     from visionpack.index.sqlite_index import SqliteIndex
 
     view = copy.copy(project)
     view.index = SqliteIndex(project.root, db_path=db_path)
-    inventory = payload.get("inventory") or {}
-    view.manifest = replace(project.manifest, classes=[ClassDef.from_dict(c) for c in inventory.get("classes", [])])
+    view.manifest = replace(project.manifest, classes=[ClassDef.from_dict(c) for c in classes_data])
     return view
 
 
