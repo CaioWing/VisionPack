@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -119,21 +120,28 @@ class SourceSyncer:
         )
         existing_ids = {asset.id for asset in self.project.index.assets()}
 
-        for image_ref, label_ref in result.pairs:
+        # Reading bytes, hashing, probing, perceptual-hashing and storing are
+        # per-image and I/O-bound, so fan them out across threads (matching
+        # YoloImporter). Index mutation stays on this thread; pool.map preserves
+        # input order, so the result is deterministic regardless of scheduling.
+        def process(pair: tuple[FileRef, FileRef | None]) -> tuple[Asset, Annotation | None, int]:
+            image_ref, label_ref = pair
             label_text = label_res.read_bytes(label_ref.uri).decode("utf-8") if label_ref else None
-            asset, annotation, object_count = self._ingest(
-                image_ref, image_res, label_text, label_ref.uri if label_ref else None, index_to_class_id
-            )
-            self.project.index.upsert_asset(asset)
-            if asset.id in existing_ids:
-                summary.assets_existing += 1
-            else:
-                summary.assets_added += 1
-                existing_ids.add(asset.id)
-            if annotation is not None:
-                self.project.index.upsert_annotation(annotation)
-                summary.annotations += 1
-                summary.objects += object_count
+            origin = label_ref.uri if label_ref else None
+            return self._ingest(image_ref, image_res, label_text, origin, index_to_class_id)
+
+        with ThreadPoolExecutor() as pool:
+            for asset, annotation, object_count in pool.map(process, result.pairs):
+                self.project.index.upsert_asset(asset)
+                if asset.id in existing_ids:
+                    summary.assets_existing += 1
+                else:
+                    summary.assets_added += 1
+                    existing_ids.add(asset.id)
+                if annotation is not None:
+                    self.project.index.upsert_annotation(annotation)
+                    summary.annotations += 1
+                    summary.objects += object_count
 
         self._record(summary, images_loc, labels_loc)
         return summary
