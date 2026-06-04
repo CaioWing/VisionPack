@@ -137,7 +137,7 @@ def export_yolo(project: Project, output: Path, split_id: str | None = None) -> 
     per_set: dict[str, int] = {name: 0 for name in set_names}
     skipped = 0
 
-    for asset in project.index.assets():
+    for asset, annotation in project.index.iter_assets_with_annotations():
         set_name = set_for_asset(asset.id)
         if set_name is None:
             skipped += 1
@@ -153,7 +153,6 @@ def export_yolo(project: Project, output: Path, split_id: str | None = None) -> 
         exported_images += 1
         per_set[set_name] = per_set.get(set_name, 0) + 1
 
-        annotation = project.index.annotation_for_asset(asset.id)
         lines: list[str] = []
         if annotation:
             for obj in annotation.objects:

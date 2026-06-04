@@ -1,41 +1,50 @@
 from __future__ import annotations
 
 from collections import Counter
-from statistics import mean
 from typing import Any
 
 from visionpack.core.project import Project
 
 
 def collect_stats(project: Project) -> dict[str, Any]:
-    assets = project.index.assets()
-    annotations = project.index.annotations()
-    annotations_by_asset = {annotation.asset_id: annotation for annotation in annotations}
+    # Streamed single pass: accumulate into counters/running totals so memory is
+    # bounded by the number of distinct resolutions/classes, not by the dataset
+    # size (no per-image lists held in RAM).
     class_counts: Counter[str] = Counter()
-    labels_per_image: list[int] = []
     resolutions: Counter[str] = Counter()
-    sizes: list[int] = []
+    total_assets = 0
+    total_annotations = 0
+    total_objects = 0
+    images_without_annotations = 0
+    empty_images = 0
+    total_size_bytes = 0
 
-    for asset in assets:
-        annotation = annotations_by_asset.get(asset.id)
-        object_count = len(annotation.objects) if annotation else 0
-        labels_per_image.append(object_count)
-        sizes.append(asset.size_bytes)
+    for asset, annotation in project.index.iter_assets_with_annotations():
+        total_assets += 1
+        total_size_bytes += asset.size_bytes
         resolutions[f"{asset.width}x{asset.height}"] += 1
-        if annotation:
+        object_count = len(annotation.objects) if annotation else 0
+        if annotation is None:
+            images_without_annotations += 1
+        else:
+            total_annotations += 1
+        if object_count == 0:
+            empty_images += 1
+        else:
+            total_objects += object_count
             class_counts.update(obj.class_id for obj in annotation.objects)
 
     return {
-        "assets": len(assets),
-        "annotations": len(annotations),
-        "objects": sum(class_counts.values()),
+        "assets": total_assets,
+        "annotations": total_annotations,
+        "objects": total_objects,
         "classes": len(project.manifest.classes),
         "class_distribution": dict(sorted(class_counts.items())),
         "resolutions": dict(sorted(resolutions.items(), key=lambda item: (-item[1], item[0]))),
-        "images_without_annotations": sum(1 for asset in assets if asset.id not in annotations_by_asset),
-        "empty_images": sum(1 for count in labels_per_image if count == 0),
-        "avg_labels_per_image": round(mean(labels_per_image), 3) if labels_per_image else 0,
-        "total_size_bytes": sum(sizes),
+        "images_without_annotations": images_without_annotations,
+        "empty_images": empty_images,
+        "avg_labels_per_image": round(total_objects / total_assets, 3) if total_assets else 0,
+        "total_size_bytes": total_size_bytes,
     }
 
 

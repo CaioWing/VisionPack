@@ -253,6 +253,6 @@ More stable SDK methods will be added as the internal workflows settle.
 - `vp annotate` is scaffolded but not implemented yet
 - remote source backends (S3/GCS/Azure/git) are planned; sources are local for now
 - `vp eval` (scoring predictions into benchmark metrics) is planned
-- the local index is SQLite (`index.db`); full-scan commands still materialize all
-  records into RAM (streaming reads are the next scale step — see
-  [ARCHITECTURE.md](../ARCHITECTURE.md))
+- the local index is SQLite (`index.db`); `stats` and exports stream records (flat
+  RAM at scale), while `validate`, `split`, dedup, and the WebDataset pack still load
+  the full set (next streaming pass — see [ARCHITECTURE.md](../ARCHITECTURE.md))

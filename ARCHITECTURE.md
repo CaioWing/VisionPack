@@ -102,8 +102,14 @@ visionpack/
 - **DuckDB — still deferred.** SQLite covers the transactional index well. DuckDB's
   remaining payoff is analytical (SQL group-by for stats/dedup over the SQLite/
   parquet data); it can be added as a query layer when a Phase B feature needs it.
-  The next scale step is streaming reads (cursor iteration) so full-scan commands
-  stop materializing every object into RAM.
+- **Streaming reads.** `SqliteIndex.iter_assets()` / `iter_annotations()` /
+  `iter_assets_with_annotations()` iterate straight off a DB cursor (a LEFT JOIN for
+  the paired case), so a full-scan command never holds every record in RAM. `stats`
+  and the YOLO/COCO/ImageFolder exporters use them — peak RAM for a 100k-record scan
+  drops from ~220MB (materialized list + asset→annotation map) to flat. They fall
+  back to the in-memory view when there are unsaved writes. Still materializing:
+  `validate`, deterministic `split`, dedup, and the WebDataset pack (each needs the
+  whole set at once) — candidates for the next pass.
 
 ---
 

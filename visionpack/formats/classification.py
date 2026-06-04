@@ -130,12 +130,11 @@ def export_imagefolder(project: Project, output: Path, split_id: str | None = No
     exported = 0
     skipped = 0
     per_set: dict[str, int] = {}
-    for asset in project.index.assets():
+    for asset, annotation in project.index.iter_assets_with_annotations():
         set_name = set_for_asset(asset.id)
         if set_name is None:
             skipped += 1
             continue
-        annotation = project.index.annotation_for_asset(asset.id)
         label_obj = next((obj for obj in annotation.objects), None) if annotation else None
         if label_obj is None:
             skipped += 1

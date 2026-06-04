@@ -80,6 +80,31 @@ class SqliteIndexTest(unittest.TestCase):
                 count = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
             self.assertEqual(count, 6)
 
+    def test_streaming_pairs_assets_with_annotations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            idx = SqliteIndex(root)
+            a1, a2 = _asset(1), _asset(2)
+            idx.upsert_asset(a1)
+            idx.upsert_asset(a2)
+            idx.upsert_annotation(_ann(a1.id))  # a2 has no annotation
+            idx.save()
+
+            by_id = {asset.id: ann for asset, ann in SqliteIndex(root).iter_assets_with_annotations()}
+            self.assertEqual(set(by_id), {a1.id, a2.id})
+            self.assertIsNotNone(by_id[a1.id])
+            self.assertIsNone(by_id[a2.id])
+
+    def test_streaming_reflects_unsaved_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            idx = SqliteIndex(Path(tmp))
+            a = _asset(3)
+            idx.upsert_asset(a)  # not saved -> must use the in-memory fallback
+            streamed = [asset.id for asset in idx.iter_assets()]
+            self.assertEqual(streamed, [a.id])
+            paired = [(asset.id, ann) for asset, ann in idx.iter_assets_with_annotations()]
+            self.assertEqual(paired, [(a.id, None)])
+
     def test_migrates_legacy_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

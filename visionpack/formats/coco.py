@@ -168,7 +168,7 @@ def export_coco(project: Project, output: Path, split_id: str | None = None) -> 
     exported_objects = 0
     skipped = 0
 
-    for asset in project.index.assets():
+    for asset, annotation in project.index.iter_assets_with_annotations():
         set_name = set_for_asset(asset.id)
         if set_name is None:
             skipped += 1
@@ -186,7 +186,6 @@ def export_coco(project: Project, output: Path, split_id: str | None = None) -> 
             {"id": image_id, "file_name": file_name, "width": asset.width, "height": asset.height}
         )
 
-        annotation = project.index.annotation_for_asset(asset.id)
         if not annotation:
             continue
         for obj in annotation.objects:

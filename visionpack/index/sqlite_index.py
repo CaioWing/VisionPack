@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -187,6 +188,55 @@ class SqliteIndex:
         if self._annotation_by_asset is None:
             self._annotation_by_asset = {item.asset_id: item for item in self.annotations()}
         return self._annotation_by_asset.get(asset_id)
+
+    # -- streaming reads ------------------------------------------------------
+    #
+    # These iterate rows straight off a DB cursor so a full-scan command never has
+    # to hold every record (and the auxiliary maps) in RAM at once. When there are
+    # unsaved writes or an already-materialized cache, they fall back to the
+    # in-memory view to stay correct.
+
+    def iter_assets(self) -> "Iterator[Asset]":
+        if self._dirty_assets or self._assets is not None:
+            yield from self.assets()
+            return
+        conn = self._connect()
+        try:
+            for (blob,) in conn.execute("SELECT data FROM assets"):
+                yield Asset.from_dict(orjson.loads(blob))
+        finally:
+            conn.close()
+
+    def iter_annotations(self) -> "Iterator[Annotation]":
+        if self._dirty_annotations or self._annotations is not None:
+            yield from self.annotations()
+            return
+        conn = self._connect()
+        try:
+            for (blob,) in conn.execute("SELECT data FROM annotations"):
+                yield Annotation.from_dict(orjson.loads(blob))
+        finally:
+            conn.close()
+
+    def iter_assets_with_annotations(self) -> "Iterator[tuple[Asset, Annotation | None]]":
+        """Stream each asset paired with its annotation (or None) via a LEFT JOIN.
+
+        This is what export/stats want: one pass, no full asset list and no
+        asset->annotation map materialized.
+        """
+        if self._dirty_assets or self._dirty_annotations or self._assets is not None or self._annotations is not None:
+            for asset in self.assets():
+                yield asset, self.annotation_for_asset(asset.id)
+            return
+        conn = self._connect()
+        try:
+            query = "SELECT a.data, n.data FROM assets a LEFT JOIN annotations n ON n.asset_id = a.id"
+            for asset_blob, ann_blob in conn.execute(query):
+                asset = Asset.from_dict(orjson.loads(asset_blob))
+                annotation = Annotation.from_dict(orjson.loads(ann_blob)) if ann_blob is not None else None
+                yield asset, annotation
+        finally:
+            conn.close()
 
     def orphan_labels(self) -> list[str]:
         return [str(item) for item in self._meta().get("orphan_labels", [])]
