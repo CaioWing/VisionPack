@@ -42,6 +42,11 @@ dependencies = [
     "zstandard>=0.25.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/CaioWing/VisionPack"
+Repository = "https://github.com/CaioWing/VisionPack"
+Issues = "https://github.com/CaioWing/VisionPack/issues"
+
 [project.scripts]
 vp = "visionpack.cli.main:main"
 visionpack = "visionpack.cli.main:main"
