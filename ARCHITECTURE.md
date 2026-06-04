@@ -32,7 +32,7 @@ visionpack/
   cli/
     main.py              # argparse wiring; registers every subcommand
     commands/            # one module per command (init, import, sync, validate,
-                         #   stats, split, snapshot, diff, export, pack, annotate)
+                         #   fsck, stats, split, snapshot, diff, export, pack, annotate)
   core/
     project.py           # Project: manifest + index + object store handle
     manifest.py          # Manifest dataclass + pydantic schema (sources, classes…)
