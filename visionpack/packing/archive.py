@@ -50,9 +50,9 @@ def pack_archive(project: Project, output: Path | None = None, profile_name: str
     with packer.open(archive_format) as tar:
         files += _add_path(tar, project.manifest_path, "visionpack.yaml")
 
-        index_path = project.root / ".vp" / "db" / "index.json"
+        index_path = project.root / ".vp" / "db" / "index.db"
         if index_path.exists():
-            files += _add_path(tar, index_path, ".vp/db/index.json")
+            files += _add_path(tar, index_path, ".vp/db/index.db")
 
         if include_metadata:
             for snapshot_path in sorted((project.root / ".vp" / "snapshots").glob("*.json")):

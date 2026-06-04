@@ -5,7 +5,7 @@ from pathlib import Path
 
 from visionpack.core.errors import ProjectNotFoundError
 from visionpack.core.manifest import Manifest, read_manifest, write_manifest
-from visionpack.index import JsonIndex
+from visionpack.index import Index
 from visionpack.storage.object_store import ObjectStore
 
 
@@ -16,7 +16,7 @@ class Project:
         if not self.manifest_path.exists():
             raise ProjectNotFoundError(f"No visionpack.yaml found at {self.root}")
         self.manifest = read_manifest(self.manifest_path)
-        self.index = JsonIndex(self.root)
+        self.index = Index(self.root)
         self.object_store = ObjectStore(self.root)
 
     @classmethod

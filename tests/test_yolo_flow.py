@@ -63,7 +63,7 @@ class YoloFlowTest(unittest.TestCase):
             self.assertEqual(pack_summary.assets, 1)
             archive_names = _read_tar_zst_names(pack_summary.path)
             self.assertIn("visionpack.yaml", archive_names)
-            self.assertIn(".vp/db/index.json", archive_names)
+            self.assertIn(".vp/db/index.db", archive_names)
             self.assertIn(".vp/snapshots/v1.json", archive_names)
             self.assertIn(".vp/snapshots/v2.json", archive_names)
             self.assertIn("pack.json", archive_names)

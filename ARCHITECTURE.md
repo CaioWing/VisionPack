@@ -87,13 +87,23 @@ visionpack/
 - **Content-addressable store** at `.vp/objects/sha256/ab/cd/<hash>`. The `ingest`
   copy mode (default) makes the dataset self-contained; `reference` keeps bytes in
   place and stores only the path + hash; `hardlink`/`copy`/`move` are also available.
-- **JSON index** at `.vp/db/index.json`. Deserialized records and an
-  `asset_id -> annotation` map are cached so validation/stats/export don't re-parse
-  on every call (keeps lookups O(1) at the README's target scale).
-- **DuckDB — deferred by decision.** At current scale the cached lists are fine, and
-  DuckDB's payoff (SQL aggregations/joins, scale past RAM) is pulled by Phase B. When
-  built it will be an in-memory query layer over the portable JSON store (no binary
-  index file, no file-lock issues), driven by a real query need.
+- **SQLite index** at `.vp/db/index.db` (`index/sqlite_index.py`). Each record is
+  stored as an orjson blob keyed by id, with an index on `annotations.asset_id`.
+  Chosen for scale: opening is instant (records load lazily, only when a read needs
+  them), saving is **incremental and atomic** (only rows touched since the last save
+  are written, in one transaction — no full rewrite, no corruption risk), and point
+  lookups are indexed queries that don't load everything. Connections are
+  short-lived (opened per load/save) so no file handle lingers. A legacy
+  `index.json` is migrated transparently on first open and moved aside.
+  Measured at 100k assets+annotations: open 6.06s → 0.002s, per-mutation save
+  1.06s → 0.009s versus the old JSON index.
+- **JSON index** (`index/json_index.py`) is retained for the one-time legacy
+  migration and uses orjson + atomic writes.
+- **DuckDB — still deferred.** SQLite covers the transactional index well. DuckDB's
+  remaining payoff is analytical (SQL group-by for stats/dedup over the SQLite/
+  parquet data); it can be added as a query layer when a Phase B feature needs it.
+  The next scale step is streaming reads (cursor iteration) so full-scan commands
+  stop materializing every object into RAM.
 
 ---
 

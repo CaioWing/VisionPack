@@ -45,7 +45,7 @@ class ProjectInitTest(unittest.TestCase):
             root = Path(tmp) / "proj"
             Project.init(root, name="proj")
             vp = root / ".vp"
-            self.assertTrue((vp / "db" / "index.json").exists())
+            self.assertTrue((vp / "db" / "index.db").exists())
             self.assertTrue((vp / "objects").is_dir())
             self.assertTrue((vp / "snapshots").is_dir())
 
