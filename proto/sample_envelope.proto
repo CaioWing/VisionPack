@@ -1,0 +1,236 @@
+syntax = "proto3";
+
+package visionpack.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/CaioWing/visionpack/gen/go/visionpack/v1;visionpackv1";
+
+// =============================================================================
+// SampleEnvelope — o ÚNICO contrato da plataforma (o "narrow waist").
+//
+// Todo source adapter, seja qual for o runtime (DeepStream, ONNX Runtime,
+// Triton, ROS2) ou transporte (MQTT, gRPC, UDS, arquivo), emite esta mensagem
+// e NADA além dela. O core nunca enxerga especificidades de plataforma.
+//
+// Disciplina de versionamento (ver SPEC.md):
+//   - Dentro de v1: só mudanças ADITIVAS. Nunca renumere nem reutilize um
+//     número de campo.
+//   - Campo removido vai para `reserved` (número E nome).
+//   - Mudança que quebra compatibilidade bumpa o pacote: visionpack.v2.
+//   - proto3 preserva campos desconhecidos => forward-compat: um core antigo
+//     ingere envelopes de um adapter mais novo ignorando o que não conhece.
+// =============================================================================
+message SampleEnvelope {
+  // Versão do schema, ex. "1.3". Redundante com a versão do pacote, mas útil
+  // para debug, filtro de logs e gating de capability em runtime.
+  string schema_version = 1;
+
+  // Id único e estável desta amostra. UUIDv7 recomendado (ordenável por tempo).
+  string envelope_id = 2;
+
+  // Quando o frame foi CAPTURADO no dispositivo (não quando foi enviado).
+  google.protobuf.Timestamp captured_at = 3;
+
+  // De onde veio.
+  Source source = 4;
+
+  // Qual modelo produziu as predições abaixo.
+  ModelRef model = 5;
+
+  // Referências content-addressed para os pixels. Os bytes NÃO vão embutidos
+  // aqui — são enviados de forma preguiçosa (lazy) e endereçados por sha256.
+  // É isso que mantém o envelope minúsculo e deixa a nuvem decidir o que
+  // hidratar de verdade.
+  BlobRef frame = 6;
+  BlobRef thumbnail = 7;        // opcional, preview barato para triagem
+  repeated BlobRef crops = 8;   // opcional, recortes por objeto
+
+  // Predições task-agnósticas. Uma amostra pode carregar várias (ex. um objeto
+  // por anotação).
+  repeated Annotation predictions = 9;
+
+  // Embedding opcional para scoring de drift / novidade.
+  Embedding embedding = 10;
+
+  // Por que o sampler on-device guardou este frame. Pode haver mais de um.
+  repeated Trigger triggers = 11;
+
+  // Privacidade: que redação já foi aplicada NO DISPOSITIVO antes do upload.
+  Redaction redaction = 12;
+
+  // Chave/valor namespaced para contexto específico do cliente que NÃO pertence
+  // ao schema do core (id de layout de loja, turno, corredor, etc.).
+  map<string, string> attributes = 13;
+
+  // reserved 14 to 19;  // exemplo: reserve espaço, nunca reuse números removidos
+}
+
+message Source {
+  string device_id = 1;        // identificador estável de hardware/dispositivo
+  string site_id = 2;          // loja / site / agrupamento de frota
+  string adapter = 3;          // ex. "deepstream", "mqtt", "onnxruntime"
+  string adapter_version = 4;
+  string runtime = 5;          // descritor livre do runtime
+}
+
+message ModelRef {
+  string name = 1;
+  string version = 2;
+  string artifact_sha256 = 3;  // amarra as predições a um build exato do modelo
+  TaskType task = 4;
+}
+
+message BlobRef {
+  string sha256 = 1;           // endereço de conteúdo — a CHAVE de dedup
+  string media_type = 2;       // ex. "image/jpeg", "image/webp"
+  uint64 size_bytes = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  // Localização já conhecida (opcional); se vazio, o core resolve/faz upload.
+  string uri = 6;
+}
+
+enum TaskType {
+  TASK_TYPE_UNSPECIFIED = 0;
+  TASK_TYPE_CLASSIFICATION = 1;
+  TASK_TYPE_DETECTION = 2;
+  TASK_TYPE_INSTANCE_SEGMENTATION = 3;
+  TASK_TYPE_SEMANTIC_SEGMENTATION = 4;
+  TASK_TYPE_KEYPOINTS = 5;
+  TASK_TYPE_OBB = 6;           // oriented bounding box
+}
+
+// Annotation é a "geometria taggeada": um label mais exatamente UMA geometria,
+// selecionada pelo oneof. Adicionar um novo tipo de geometria é mudança aditiva.
+message Annotation {
+  string label = 1;
+  uint32 label_index = 2;
+  float confidence = 3;
+  string track_id = 4;         // opcional, para tracking multi-objeto
+
+  oneof geometry {
+    Classification classification = 10;
+    BoundingBox bbox = 11;
+    OrientedBox obox = 12;
+    Polygon polygon = 13;
+    Mask mask = 14;
+    Keypoints keypoints = 15;
+  }
+}
+
+message Classification {
+  // Para top-k, repita Annotation; aqui guarda o vetor de scores opcional.
+  repeated float scores = 1 [packed = true];
+}
+
+// Todas as coordenadas normalizadas em [0,1] relativas a largura/altura do
+// frame — geometria independente de resolução entre câmeras heterogêneas.
+message BoundingBox {
+  float x = 1;                 // canto superior esquerdo
+  float y = 2;
+  float w = 3;
+  float h = 4;
+}
+
+message OrientedBox {
+  float cx = 1;
+  float cy = 2;
+  float w = 3;
+  float h = 4;
+  float angle_rad = 5;
+}
+
+message Polygon {
+  repeated Point points = 1;
+}
+
+message Mask {
+  // RLE inline (pequeno) OU um BlobRef para máscaras grandes.
+  oneof encoding {
+    string rle = 1;            // RLE estilo COCO
+    BlobRef blob = 2;
+  }
+}
+
+message Keypoints {
+  repeated Keypoint points = 1;
+}
+
+message Keypoint {
+  float x = 1;
+  float y = 2;
+  float visibility = 3;        // 0 oculto .. 1 visível
+  string name = 4;
+}
+
+message Point {
+  float x = 1;
+  float y = 2;
+}
+
+message Embedding {
+  repeated float vector = 1 [packed = true];
+  uint32 dim = 2;
+  string model = 3;            // qual encoder produziu
+  bool normalized = 4;         // L2-normalizado?
+}
+
+message Trigger {
+  TriggerReason reason = 1;
+  float score = 2;             // ex. valor de incerteza, distância de drift
+  string detail = 3;
+}
+
+enum TriggerReason {
+  TRIGGER_REASON_UNSPECIFIED = 0;
+  TRIGGER_REASON_LOW_CONFIDENCE = 1;
+  TRIGGER_REASON_HIGH_ENTROPY = 2;
+  TRIGGER_REASON_DRIFT = 3;             // OOD vs distribuição de treino
+  TRIGGER_REASON_NOVELTY = 4;
+  TRIGGER_REASON_FAILURE_HEURISTIC = 5; // ex. obstrução, nenhuma detecção
+  TRIGGER_REASON_RESERVOIR = 6;         // amostra aleatória de baseline
+  TRIGGER_REASON_MANUAL = 7;
+  TRIGGER_REASON_DISAGREEMENT = 8;      // modelo vs sinal secundário
+}
+
+message Redaction {
+  bool applied = 1;
+  RedactionMethod method = 2;
+  repeated BoundingBox regions = 3;     // o que foi borrado/mascarado
+}
+
+enum RedactionMethod {
+  REDACTION_METHOD_UNSPECIFIED = 0;
+  REDACTION_METHOD_NONE = 1;
+  REDACTION_METHOD_FACE_BLUR = 2;
+  REDACTION_METHOD_FULL_BODY_BLUR = 3;
+  REDACTION_METHOD_PIXELATE = 4;
+}
+
+// =============================================================================
+// AdapterCapabilities — anunciado UMA vez quando o adapter conecta (handshake),
+// NÃO por amostra. O sampler do core lê isso e seleciona a política de sampling
+// mais rica que o adapter consegue sustentar, degradando com elegância quando
+// um sinal não existe.
+// =============================================================================
+message AdapterCapabilities {
+  string adapter = 1;
+  string adapter_version = 2;
+  string schema_version = 3;
+
+  repeated TaskType supported_tasks = 4;
+
+  bool provides_confidence = 5;
+  bool provides_embedding = 6;
+  uint32 embedding_dim = 7;
+  bool provides_raw_frame = 8;
+  bool provides_thumbnail = 9;
+  bool can_redact_on_device = 10;
+
+  // Transporte que o adapter fala com o collector local.
+  string transport = 11;       // "uds", "grpc", "mqtt", ...
+
+  // Taxa máxima de amostras que o adapter sustenta sem backpressure.
+  float max_sample_rate_hz = 12;
+}
