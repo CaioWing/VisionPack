@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from visionpack.core.errors import VisionPackError
 from visionpack.core.models import Annotation, Asset, utc_now
@@ -21,6 +22,10 @@ from visionpack.storage.hash import sha256_bytes
 
 _LABEL_SUFFIXES = {".txt"}
 _CLASS_FILES = ("classes.txt", "obj.names")
+# Fields persisted in the blob cache and replayed on an unchanged re-sync.
+_PROBE_KEYS = ("sha256", "width", "height", "channels", "format", "phash")
+# (uri, etag, size, probe) to hand to index.put_blob_probe — produced on a miss.
+_CacheWrite = tuple[str, "str | None", int, dict]
 
 
 @dataclass(slots=True)
@@ -66,13 +71,34 @@ class SourceSyncer:
         # root (not the cwd) so `vp sync` works from any directory.
         self.source = _rebase_source(source, project.root)
 
+    # -- resolvers ------------------------------------------------------------
+
+    def _resolver(self, loc: Location) -> Resolver:
+        """A resolver for ``loc``, wired with this source's credentials/region.
+
+        All resolver access goes through here so cloud auth declared in the YAML
+        actually reaches the provider filesystem (the schema promises it).
+        """
+        return get_resolver(loc.resolved_uri(), self._storage_options(loc))
+
+    def _storage_options(self, loc: Location) -> dict[str, Any]:
+        # Source-level credentials are the base; per-location ones override. The
+        # dict is forwarded verbatim to fsspec, so users have full control over
+        # provider-specific keys; `region` is mapped to the one spot S3 reads it.
+        options: dict[str, Any] = {**self.source.credentials, **loc.credentials}
+        if loc.region and scheme_of(loc.resolved_uri()) == "s3":
+            client_kwargs = dict(options.get("client_kwargs", {}))
+            client_kwargs.setdefault("region_name", loc.region)
+            options["client_kwargs"] = client_kwargs
+        return options
+
     # -- public ---------------------------------------------------------------
 
     def plan(self) -> SourcePlan:
         if self.source.format == "imagefolder":
             return self._plan_imagefolder()
         images_loc, labels_loc = self._locations()
-        image_res = get_resolver(images_loc.resolved_uri())
+        image_res = self._resolver(images_loc)
         images = image_res.list_files(images_loc.resolved_uri(), IMAGE_EXTENSIONS)
         plan = SourcePlan(
             name=self.source.name,
@@ -107,7 +133,7 @@ class SourceSyncer:
 
     def _run_yolo(self, progress: ProgressCallback | None = None) -> SourceSyncSummary:
         images_loc, labels_loc = self._locations()
-        image_res = get_resolver(images_loc.resolved_uri())
+        image_res = self._resolver(images_loc)
         images = image_res.list_files(images_loc.resolved_uri(), IMAGE_EXTENSIONS)
         labels, label_res = self._list_labels(labels_loc)
 
@@ -124,12 +150,17 @@ class SourceSyncer:
             labels_without_image=len(result.labels_without_image),
         )
         existing_ids = {asset.id for asset in self.project.index.assets()}
+        # Load every cached probe for this run's images in one query, so the
+        # per-image lookup in the threads below never opens a connection.
+        self.project.index.prime_blob_cache([image.uri for image, _ in result.pairs])
 
         # Reading bytes, hashing, probing, perceptual-hashing and storing are
         # per-image and I/O-bound, so fan them out across threads (matching
         # YoloImporter). Index mutation stays on this thread; pool.map preserves
         # input order, so the result is deterministic regardless of scheduling.
-        def process(pair: tuple[FileRef, FileRef | None]) -> tuple[Asset, Annotation | None, int] | IngestFailure:
+        def process(
+            pair: tuple[FileRef, FileRef | None],
+        ) -> tuple[Asset, Annotation | None, int, _CacheWrite | None] | IngestFailure:
             image_ref, label_ref = pair
             try:
                 label_text = label_res.read_bytes(label_ref.uri).decode("utf-8") if label_ref else None
@@ -144,7 +175,10 @@ class SourceSyncer:
                 if isinstance(outcome, IngestFailure):
                     summary.failures.append(outcome)
                 else:
-                    asset, annotation, object_count = outcome
+                    asset, annotation, object_count, cache_write = outcome
+                    # Cache writes mutate the index, so they stay on this thread.
+                    if cache_write is not None:
+                        self.project.index.put_blob_probe(*cache_write)
                     self.project.index.upsert_asset(asset)
                     if asset.id in existing_ids:
                         summary.assets_existing += 1
@@ -168,25 +202,23 @@ class SourceSyncer:
         label_text: str | None,
         label_origin: str | None,
         index_to_class_id: dict[int, str],
-    ) -> tuple[Asset, Annotation | None, int]:
-        data = image_res.read_bytes(image_ref.uri)
-        digest = sha256_bytes(data)
-        width, height, channels, image_format = image_info_from_bytes(data, Path(image_ref.uri))
+    ) -> tuple[Asset, Annotation | None, int, _CacheWrite | None]:
+        probe, cache_write = self._resolve_blob(image_ref, image_res)
+        digest = probe["sha256"]
+        width, height = probe["width"], probe["height"]
         asset_id = f"asset_{digest[:16]}"
-        local = image_res.local_path(image_ref.uri) or Path(image_ref.uri)
-        stored_path = self.project.object_store.store(local, digest, self.source.copy, data=data)
         asset = Asset(
             id=asset_id,
             sha256=digest,
             media_type="image",
-            path=stored_path,
+            path=probe["stored_path"],
             original_path=image_ref.uri,
             width=width,
             height=height,
-            channels=channels,
-            format=image_format,
-            size_bytes=len(data),
-            phash=dhash_bytes(data),
+            channels=probe["channels"],
+            format=probe["format"],
+            size_bytes=probe["size_bytes"],
+            phash=probe["phash"],
             source=self.source.name,
         )
 
@@ -203,7 +235,55 @@ class SourceSyncer:
                 objects=objects,
                 source={"type": "sync", "format": "yolo", "source": self.source.name, "path": label_origin, "imported_at": utc_now()},
             )
-        return asset, annotation, object_count
+        return asset, annotation, object_count, cache_write
+
+    def _resolve_blob(self, image_ref: FileRef, image_res: Resolver) -> tuple[dict, _CacheWrite | None]:
+        """Probe an image, skipping the body read when it is provably unchanged.
+
+        Returns the fields needed to build the ``Asset`` plus, on a cache *miss*,
+        the tuple to persist so the next sync can skip it. The stat comes from the
+        listing (``FileRef.stat``) — no per-object metadata round-trip — falling
+        back to a single ``stat`` call only if the backend didn't carry it.
+        """
+        stat = image_ref.stat or image_res.stat(image_ref.uri)
+        cached = self.project.index.cached_blob_probe(image_ref.uri, stat.etag, stat.size)
+        if cached is not None:
+            stored_path = self._reuse_stored(cached["sha256"], image_ref, image_res)
+            if stored_path is not None:
+                full = dict(cached, size_bytes=stat.size, stored_path=stored_path)
+                return full, None
+
+        data = image_res.read_bytes(image_ref.uri)
+        digest = sha256_bytes(data)
+        width, height, channels, image_format = image_info_from_bytes(data, Path(image_ref.uri))
+        local = image_res.local_path(image_ref.uri) or Path(image_ref.uri)
+        stored_path = self.project.object_store.store(local, digest, self.source.copy, data=data)
+        full = {
+            "sha256": digest,
+            "width": width,
+            "height": height,
+            "channels": channels,
+            "format": image_format,
+            "phash": dhash_bytes(data),
+            "size_bytes": len(data),
+            "stored_path": stored_path,
+        }
+        cache_probe = {key: full[key] for key in _PROBE_KEYS}
+        return full, (image_ref.uri, stat.etag, stat.size, cache_probe)
+
+    def _reuse_stored(self, sha256: str, image_ref: FileRef, image_res: Resolver) -> str | None:
+        """The asset ``path`` to reuse on a cache hit, or ``None`` if it's gone.
+
+        A cached probe is only usable if the bytes it points at still exist. For
+        CAS modes that means the object is still in the store; for ``reference``
+        the path is the source itself, reusable while it still resolves locally.
+        """
+        if self.source.copy == "reference":
+            local = image_res.local_path(image_ref.uri)
+            return str(local.resolve()) if local is not None else None
+        if self.project.object_store.object_path(sha256).exists():
+            return self.project.object_store.relpath(sha256)
+        return None
 
     def _yolo_class_names(
         self,
@@ -220,7 +300,7 @@ class SourceSyncer:
             for loc in (self.source.root, images_loc, labels_loc):
                 if loc is None:
                     continue
-                found = self._class_names_from_file(loc, get_resolver(loc.resolved_uri()))
+                found = self._class_names_from_file(loc, self._resolver(loc))
                 if found:
                     names = found
                     break
@@ -232,7 +312,7 @@ class SourceSyncer:
         if self.source.classes is None:
             return []
         loc = self.source.classes
-        res = get_resolver(loc.resolved_uri())
+        res = self._resolver(loc)
         text = res.read_bytes(loc.resolved_uri()).decode("utf-8")
         return [line.strip() for line in text.splitlines() if line.strip()]
 
@@ -254,7 +334,7 @@ class SourceSyncer:
 
         if labels_loc is None:
             raise VisionPackError(f"COCO source {self.source.name!r} must declare 'labels' (the instances JSON).")
-        label_res = get_resolver(labels_loc.resolved_uri())
+        label_res = self._resolver(labels_loc)
         document = json.loads(label_res.read_bytes(labels_loc.resolved_uri()).decode("utf-8"))
         file_names = {str(record.get("file_name")) for record in document.get("images", [])}
         present = {ref.uri.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for ref in images}
@@ -271,8 +351,8 @@ class SourceSyncer:
         images_loc, labels_loc = self._locations()
         if labels_loc is None:
             raise VisionPackError(f"COCO source {self.source.name!r} must declare 'labels' (the instances JSON).")
-        image_res = get_resolver(images_loc.resolved_uri())
-        label_res = get_resolver(labels_loc.resolved_uri())
+        image_res = self._resolver(images_loc)
+        label_res = self._resolver(labels_loc)
         images_path = image_res.local_path(images_loc.resolved_uri())
         labels_path = label_res.local_path(labels_loc.resolved_uri())
         if images_path is None or labels_path is None:
@@ -305,7 +385,7 @@ class SourceSyncer:
 
     def _plan_imagefolder(self) -> SourcePlan:
         root = self._imagefolder_root()
-        resolver = get_resolver(root.resolved_uri())
+        resolver = self._resolver(root)
         images = resolver.list_files(root.resolved_uri(), IMAGE_EXTENSIONS)
         # The class is the first path segment under the root.
         class_names = sorted({ref.relkey.split("/")[0] for ref in images if "/" in ref.relkey})
@@ -324,7 +404,7 @@ class SourceSyncer:
         from visionpack.formats.classification import ImageFolderImporter
 
         root = self._imagefolder_root()
-        resolver = get_resolver(root.resolved_uri())
+        resolver = self._resolver(root)
         root_path = resolver.local_path(root.resolved_uri())
         if root_path is None:
             raise VisionPackError(
@@ -378,7 +458,7 @@ class SourceSyncer:
             return None
         candidate = self.source.root.child(subdir)
         try:
-            resolver = get_resolver(candidate.resolved_uri())
+            resolver = self._resolver(candidate)
             if resolver.exists(candidate.resolved_uri()):
                 return candidate
         except VisionPackError:
@@ -388,7 +468,7 @@ class SourceSyncer:
     def _list_labels(self, labels_loc: Location | None) -> tuple[list[FileRef], Resolver | None]:
         if labels_loc is None:
             return [], None
-        resolver = get_resolver(labels_loc.resolved_uri())
+        resolver = self._resolver(labels_loc)
         labels = [
             ref
             for ref in resolver.list_files(labels_loc.resolved_uri(), _LABEL_SUFFIXES)

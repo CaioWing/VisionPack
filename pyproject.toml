@@ -42,6 +42,14 @@ dependencies = [
     "zstandard>=0.25.0",
 ]
 
+[project.optional-dependencies]
+# Cloud source/sink backends. Each pulls fsspec plus the provider filesystem;
+# the core never imports these — `get_resolver` only reaches for them when a
+# remote URI scheme is used. See docs/SPEC-cloud-sync.md.
+s3 = ["fsspec>=2024.6.0", "s3fs>=2024.6.0"]
+gcs = ["fsspec>=2024.6.0", "gcsfs>=2024.6.0"]
+azure = ["fsspec>=2024.6.0", "adlfs>=2024.6.0"]
+
 [project.urls]
 Homepage = "https://github.com/CaioWing/VisionPack"
 Repository = "https://github.com/CaioWing/VisionPack"
@@ -52,7 +60,9 @@ vp = "visionpack.cli.main:main"
 visionpack = "visionpack.cli.main:main"
 
 [dependency-groups]
-dev = ["ruff>=0.6"]
+# fsspec (core only — no provider libs needed) gives the in-memory filesystem the
+# FsspecResolver tests run against, so cloud-path coverage needs no network.
+dev = ["ruff>=0.6", "fsspec>=2024.6.0"]
 
 [build-system]
 requires = ["setuptools>=77", "wheel"]

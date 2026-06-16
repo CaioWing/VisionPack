@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -17,7 +17,22 @@ CREATE INDEX IF NOT EXISTS idx_annotations_asset ON annotations(asset_id);
 CREATE TABLE IF NOT EXISTS splits (id TEXT PRIMARY KEY, data BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS imports (seq INTEGER PRIMARY KEY AUTOINCREMENT, data BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS blob_cache (
+    uri TEXT PRIMARY KEY,
+    etag TEXT,
+    size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    channels INTEGER,
+    format TEXT,
+    phash TEXT
+);
 """
+
+# Columns of blob_cache after the (uri, etag, size) key — the cached probe a
+# re-sync replays instead of re-reading an unchanged object.
+_PROBE_COLUMNS = ("sha256", "width", "height", "channels", "format", "phash")
 
 
 class SqliteIndex:
@@ -55,6 +70,13 @@ class SqliteIndex:
         self._dirty_splits: dict[str, Split] = {}
         self._dirty_metadata: dict[str, Any] = {}
         self._new_imports: list[dict[str, Any]] = []
+        # uri -> (etag, size, probe-dict); buffered so a hit is visible within the
+        # same session before save() flushes it.
+        self._dirty_blob_cache: dict[str, tuple[str | None, int, dict[str, Any]]] = {}
+        # Read cache for the probes a sync may replay, loaded in one query by
+        # prime_blob_cache() so the per-object lookup never opens a connection
+        # (it runs inside the sync's worker threads).
+        self._blob_cache: dict[str, tuple[str | None, int, dict[str, Any]]] = {}
         self._ensure_schema()
         if self._is_live:
             self._migrate_legacy_if_needed()
@@ -87,6 +109,7 @@ class SqliteIndex:
             or self._dirty_splits
             or self._dirty_metadata
             or self._new_imports
+            or self._dirty_blob_cache
         ):
             return
         with closing(self._connect()) as conn:
@@ -115,12 +138,22 @@ class SqliteIndex:
                     "INSERT OR REPLACE INTO metadata(key, data) VALUES (?, ?)",
                     [(key, orjson.dumps(value)) for key, value in self._dirty_metadata.items()],
                 )
+            if self._dirty_blob_cache:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO blob_cache(uri, etag, size, sha256, width, height, channels, format, phash) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        (uri, etag, size, *(probe.get(col) for col in _PROBE_COLUMNS))
+                        for uri, (etag, size, probe) in self._dirty_blob_cache.items()
+                    ],
+                )
             conn.commit()
         self._dirty_assets.clear()
         self._dirty_annotations.clear()
         self._dirty_splits.clear()
         self._dirty_metadata.clear()
         self._new_imports.clear()
+        self._dirty_blob_cache.clear()
 
     # -- writes ---------------------------------------------------------------
 
@@ -143,6 +176,50 @@ class SqliteIndex:
 
     def add_import_record(self, record: dict[str, Any]) -> None:
         self._new_imports.append(record)
+
+    def put_blob_probe(self, uri: str, etag: str | None, size: int, probe: dict[str, Any]) -> None:
+        """Remember the probe of ``uri`` so an unchanged re-sync can skip reading it."""
+        self._dirty_blob_cache[uri] = (etag, size, probe)
+
+    def prime_blob_cache(self, uris: Collection[str]) -> None:
+        """Load the cached probes for ``uris`` into memory in a single query.
+
+        Called once at the start of a sync so the per-object lookup in
+        :meth:`cached_blob_probe` — which runs inside worker threads — is a plain
+        dict read, never a fresh SQLite connection per image. Scoping to the URIs
+        actually being synced keeps the working set bounded on huge stores.
+        """
+        self._blob_cache = {}
+        uri_list = list(uris)
+        if not uri_list:
+            return
+        cols = ", ".join(_PROBE_COLUMNS)
+        with closing(self._connect()) as conn:
+            # Chunked to stay under SQLite's variable limit (default 999).
+            for start in range(0, len(uri_list), 900):
+                chunk = uri_list[start : start + 900]
+                placeholders = ",".join("?" * len(chunk))
+                rows = conn.execute(
+                    f"SELECT uri, etag, size, {cols} FROM blob_cache WHERE uri IN ({placeholders})", chunk
+                ).fetchall()
+                for row in rows:
+                    self._blob_cache[row[0]] = (row[1], row[2], dict(zip(_PROBE_COLUMNS, row[3:], strict=True)))
+
+    def cached_blob_probe(self, uri: str, etag: str | None, size: int) -> dict[str, Any] | None:
+        """The cached probe for ``uri`` iff it is provably unchanged.
+
+        Validity needs a real validator: same ``etag`` (never None) **and** same
+        ``size``. Without an etag we treat the object as changed and re-read it —
+        size alone is too weak to trust (docs/SPEC-cloud-sync.md). Reads only the
+        in-memory buffers; call :meth:`prime_blob_cache` once beforehand.
+        """
+        if etag is None:
+            return None
+        hit = self._dirty_blob_cache.get(uri) or self._blob_cache.get(uri)
+        if hit is None:
+            return None
+        cached_etag, cached_size, probe = hit
+        return probe if cached_etag == etag and cached_size == size else None
 
     def set_orphan_labels(self, paths: list[str]) -> None:
         value = [str(item) for item in paths]
