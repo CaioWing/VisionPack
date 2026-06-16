@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +9,7 @@ from visionpack.core.errors import FormatError, VisionPackError
 from visionpack.core.models import Annotation, Asset, BBox, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary, IngestFailure
+from visionpack.formats.materialize import AssetMaterializer
 from visionpack.media import image_info_from_bytes, is_image_path
 from visionpack.perceptual import dhash_bytes
 from visionpack.progress import ProgressCallback
@@ -146,6 +146,7 @@ def export_yolo(
     class_index = {item.id: idx for idx, item in enumerate(classes)}
 
     set_for_asset, set_names = resolve_export_sets(project, split_id)
+    materializer = AssetMaterializer(output, project.root)
 
     exported_images = 0
     exported_labels = 0
@@ -168,9 +169,12 @@ def export_yolo(
         images_dir.mkdir(parents=True, exist_ok=True)
         labels_dir.mkdir(parents=True, exist_ok=True)
 
-        source = asset.resolved_path(project.root)
         suffix = Path(asset.original_path).suffix or f".{asset.format}"
-        shutil.copy2(source, images_dir / f"{asset.id}{suffix.lower()}")
+        image_dest = images_dir / f"{asset.id}{suffix.lower()}"
+        label_dest = labels_dir / f"{asset.id}.txt"
+        materializer.place(
+            asset, image_dest, {"label": label_dest.relative_to(output).as_posix(), "set": set_name}
+        )
         exported_images += 1
         per_set[set_name] = per_set.get(set_name, 0) + 1
 
@@ -190,14 +194,17 @@ def export_yolo(
                     f"{class_index[obj.class_id]} {_fmt(x_center)} {_fmt(y_center)} {_fmt(width)} {_fmt(height)}"
                 )
                 exported_objects += 1
-        (labels_dir / f"{asset.id}.txt").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        label_dest.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
         exported_labels += 1
 
     output.mkdir(parents=True, exist_ok=True)
     (output / "classes.txt").write_text("\n".join(item.name for item in classes) + ("\n" if classes else ""), encoding="utf-8")
     (output / "data.yaml").write_text(_render_data_yaml(classes, split_id, set_names), encoding="utf-8")
+    streamed = materializer.flush()
 
     result: dict[str, Any] = {"images": exported_images, "labels": exported_labels, "objects": exported_objects}
+    if streamed:
+        result["streamed"] = streamed
     if split_id:
         result["sets"] = per_set
         result["skipped"] = skipped

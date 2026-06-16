@@ -136,13 +136,13 @@ def export_imagefolder(
     Writes ``<set>/<class>/<image>`` when a split is given, else ``<class>/<image>``.
     Each image is filed under its label's class; images with no label are skipped.
     """
-    import shutil
-
+    from visionpack.formats.materialize import AssetMaterializer
     from visionpack.split import resolve_export_sets
 
     output = output.resolve()
     id_to_name = {item.id: item.name for item in project.manifest.classes}
     set_for_asset, _ = resolve_export_sets(project, split_id)
+    materializer = AssetMaterializer(output, project.root)
 
     exported = 0
     skipped = 0
@@ -166,11 +166,14 @@ def export_imagefolder(
         target_dir = Path(*[str(part) for part in parts])
         target_dir.mkdir(parents=True, exist_ok=True)
         suffix = Path(asset.original_path).suffix.lower() or f".{asset.format}"
-        shutil.copy2(asset.resolved_path(project.root), target_dir / f"{asset.id}{suffix}")
+        materializer.place(asset, target_dir / f"{asset.id}{suffix}", {"set": set_name, "class": class_name})
         exported += 1
         per_set[set_name] = per_set.get(set_name, 0) + 1
 
+    streamed = materializer.flush()
     result: dict[str, Any] = {"images": exported}
+    if streamed:
+        result["streamed"] = streamed
     if split_id:
         result["sets"] = per_set
         result["skipped"] = skipped

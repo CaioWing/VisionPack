@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from visionpack.core.errors import ProjectNotFoundError
@@ -54,8 +53,9 @@ class Project:
         write_manifest(self.manifest_path, self.manifest)
 
     def materialize_asset(self, asset_path: Path, output_path: Path) -> None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(asset_path, output_path)
+        from visionpack.formats.materialize import link_or_copy
+
+        link_or_copy(asset_path, output_path)
 
 
 Dataset = Project
