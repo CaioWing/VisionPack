@@ -4,6 +4,7 @@ All notable changes to VisionPack are tracked here.
 
 ## [Unreleased]
 
+- Nothing yet.
 - Cloud sync foundation (PR 1 of docs/SPEC-cloud-sync.md): `FsspecResolver` for
   remote schemes (`s3://`, `gs://`, `az://`) behind optional extras
   (`visionpack[s3]`, `[gcs]`, `[azure]`); `Resolver.stat` for metadata-only
