@@ -35,7 +35,7 @@ class CocoImporter:
         self.project = project
         self.source = source.resolve()
         self.images_dir = images_dir.resolve()
-        self.copy_mode = copy_mode
+        self.copy_mode: CopyMode = copy_mode
 
     def run(self, progress: ProgressCallback | None = None) -> ImportSummary:
         if not self.source.exists():

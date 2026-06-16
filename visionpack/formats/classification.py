@@ -33,7 +33,7 @@ class ImageFolderImporter:
     def __init__(self, project: Project, source: Path, copy_mode: CopyMode = "ingest") -> None:
         self.project = project
         self.source = source.resolve()
-        self.copy_mode = copy_mode
+        self.copy_mode : CopyMode = copy_mode
 
     def run(self, progress: ProgressCallback | None = None) -> ImportSummary:
         if not self.source.exists() or not self.source.is_dir():

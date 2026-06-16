@@ -5,12 +5,20 @@ training models: turning scattered images and labels into a clean, versioned,
 leak-free, ready-to-train dataset.
 
 [![CI](https://github.com/CaioWing/VisionPack/actions/workflows/ci.yml/badge.svg)](https://github.com/CaioWing/VisionPack/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/visionpack)](https://pypi.org/project/visionpack/)
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
-![Tests](https://img.shields.io/badge/tests-79%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-100%20passing-brightgreen)
+
+[Documentation](https://caiowing.github.io/VisionPack/) ·
+[Install](https://caiowing.github.io/VisionPack/installation/) ·
+[Quickstart](https://caiowing.github.io/VisionPack/quickstart/) ·
+[Cloud Sync](https://caiowing.github.io/VisionPack/cloud-sync/)
 
 ```bash
+pip install visionpack
+
 vp init --name factory-defects --task detection
 vp sync                 # pull images + labels from the sources in visionpack.yaml
 vp validate             # catch corrupt images, bad boxes, near-duplicate leakage
@@ -46,14 +54,21 @@ splits, packs, and exports.
 
 ## Install
 
-VisionPack uses [`uv`](https://github.com/astral-sh/uv). From the repo root:
+```bash
+pip install visionpack
+```
+
+Cloud backends are optional extras: `pip install "visionpack[s3]"` (also `[gcs]`,
+`[azure]`). Requires Python 3.11+.
+
+Developing from source uses [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
 uv sync
 uv run vp --help
 ```
 
-Requires Python 3.11+.
+📖 **Full documentation: <https://caiowing.github.io/VisionPack/>**
 
 ---
 
@@ -61,26 +76,26 @@ Requires Python 3.11+.
 
 ```bash
 # 1. create a project (the manifest is visionpack.yaml)
-uv run vp init --name factory-defects --task detection
+vp init --name factory-defects --task detection
 
 # 2. bring in a YOLO dataset
-uv run vp import ./raw --format yolo
+vp import ./raw --format yolo
 
 # 3. check it for real problems
-uv run vp validate
+vp validate
 
 # 4. a deterministic, reproducible split
-uv run vp split create --train 0.8 --val 0.1 --test 0.1 --strategy stratified
-uv run vp split lock
+vp split create --train 0.8 --val 0.1 --test 0.1 --strategy stratified
+vp split lock
 
 # 5. freeze a reproducible version
-uv run vp snapshot create -m "initial import"
+vp snapshot create -m "initial import"
 
 # 6. comparable metrics as the dataset grows
-uv run vp stats --by split
+vp stats --by split
 
 # 7. a ready-to-train layout
-uv run vp export --format yolo --split
+vp export --format yolo --split
 ```
 
 ---
@@ -99,13 +114,13 @@ tasks you actually use:
 
 ```bash
 # classification from a folder-per-class layout
-uv run vp init --name product-grades --task classification
-uv run vp import ./train --format imagefolder
-uv run vp export --format imagefolder --split        # train/val/test/<class>/…
+vp init --name product-grades --task classification
+vp import ./train --format imagefolder
+vp export --format imagefolder --split        # train/val/test/<class>/…
 
 # detection or instance segmentation from COCO
-uv run vp init --name cells --task segmentation
-uv run vp import ./instances.json --format coco --images ./images
+vp init --name cells --task segmentation
+vp import ./instances.json --format coco --images ./images
 ```
 
 ---
@@ -128,8 +143,8 @@ sources:
 Then reconcile the dataset — idempotently, so re-running only pulls what's new:
 
 ```bash
-uv run vp sync --dry-run     # preview: found / matched / unmatched / classes
-uv run vp sync               # ingest; classes merge by name, provenance recorded
+vp sync --dry-run     # preview: found / matched / unmatched / classes
+vp sync               # ingest; classes merge by name, provenance recorded
 ```
 
 Classes from different sources merge **by name** (YOLO indices are mapped through
@@ -140,6 +155,11 @@ A one-off `vp import` also records what it imported as a source in
 `visionpack.yaml`, so the manifest stays the single source of truth and the data
 can be re-pulled later with `vp sync` (use `--no-record` for a throwaway import).
 
+Sources can also live in **S3 / GCS / Azure**. Remote URIs go anywhere a local
+path would, and a `target:` lets `copy` mode land objects server-side in a
+content-addressed bucket without ever downloading them — re-sync is metadata-only.
+See the [Cloud Sync guide](https://caiowing.github.io/VisionPack/cloud-sync/).
+
 ---
 
 ## What's in the box
@@ -149,18 +169,20 @@ can be re-pulled later with `vp sync` (use `--no-record` for a throwaway import)
 - **Near-duplicate & cross-split leakage detection** — perceptual-hash tier, no
   extra dependencies, scale-proof via LSH bucketing; surfaced in `vp validate`.
 - **Multi-source sync** — declarative `sources:` + `vp sync`, with per-asset
-  provenance and a resolver layer ready for remote backends.
+  provenance; idempotent re-sync that only pulls what's new.
+- **Cloud-native** — sync from and to S3/GCS/Azure without downloading the whole
+  dataset; server-side `copy` into a content-addressed target, streaming export.
 - **Content-addressed snapshots & diff** — reproducible versions; compare any two.
 - **Strong validation** — unreadable images, missing/orphan labels, unknown
   classes, invalid/out-of-bounds boxes, exact + near duplicates, split leakage.
 - **Comparable metrics** — per-split stats so class balance stays auditable as data
   grows.
-- **Packing** — `archive` (`.tar.zst`, self-contained) and `training`
-  (split-aware WebDataset shards).
+- **Packing & byte-free export** — `archive` (`.tar.zst`) and `training`
+  (WebDataset shards); exports hardlink from the CAS or stream from the cloud.
 - **Interoperable I/O** — YOLO, COCO, ImageFolder in and out.
 
 Full command reference and per-command options live in the
-[usage guide](docs/usage.md).
+[CLI guide](https://caiowing.github.io/VisionPack/usage/).
 
 ---
 
@@ -205,10 +227,10 @@ vision, see **[docs/DESIGN.md](docs/DESIGN.md)**.
 ## Status
 
 VisionPack is in **active development** (early but usable). The core workflow —
-multi-source ingestion → validation → deterministic splits → snapshots →
-ready-to-train export/packing — works end-to-end across classification, detection,
-instance segmentation, and keypoints, with 55 passing tests. APIs may still shift;
-feedback and contributions are welcome.
+multi-source ingestion (local and cloud) → validation → deterministic splits →
+snapshots → ready-to-train export/packing — works end-to-end across
+classification, detection, instance segmentation, and keypoints, with 100 passing
+tests. APIs may still shift; feedback and contributions are welcome.
 
 ```bash
 uv run python -m unittest discover -s tests -q
