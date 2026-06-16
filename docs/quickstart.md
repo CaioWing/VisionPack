@@ -118,4 +118,3 @@ extra bytes.
 
 - [CLI Guide]({% link usage.md %}) — every command and option.
 - [Cloud Sync]({% link cloud-sync.md %}) — do all of this against S3 / GCS / Azure.
-- [Design Rationale]({% link DESIGN.md %}) — why VisionPack works the way it does.

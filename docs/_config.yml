@@ -29,8 +29,8 @@ search:
   previews: 3
   tokenizer_separator: /[\s/]+/
 
-# Light, high-contrast reading theme.
-color_scheme: light
+# Dark reading theme.
+color_scheme: dark
 
 # Header links (open in a new tab).
 aux_links:
@@ -66,3 +66,7 @@ exclude:
   - Gemfile
   - Gemfile.lock
   - vendor
+  # Internal design docs — kept local, never published to the site.
+  - DESIGN.md
+  - SPEC.md
+  - SPEC-cloud-sync.md

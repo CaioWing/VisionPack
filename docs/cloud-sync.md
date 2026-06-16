@@ -36,8 +36,7 @@ pip install "visionpack[azure]"   # Azure Blob
 
 {: .note }
 v1 is **same-provider** (S3↔S3 or GCS↔GCS). Cross-cloud transfer (S3↔GCS) is on
-the roadmap. The full design is in
-[the cloud-sync spec]({% link SPEC-cloud-sync.md %}).
+the roadmap.
 
 ## Declare remote sources
 
@@ -149,5 +148,5 @@ the delta is empty, nothing is read or copied. That's the whole recurring cost.
 
 ## See also
 
-- [Cloud Sync Spec]({% link SPEC-cloud-sync.md %}) — the design and guarantees in full.
 - [CLI Guide]({% link usage.md %}) — `vp sync` / `vp export` options.
+- [Quickstart]({% link quickstart.md %}) — the local-first walkthrough.

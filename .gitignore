@@ -10,3 +10,8 @@ build/
 .vp/
 exports/
 reports/
+
+# Internal design docs — kept local, not published to the site or the repo.
+docs/DESIGN.md
+docs/SPEC.md
+docs/SPEC-cloud-sync.md
