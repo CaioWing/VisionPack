@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from visionpack.core.errors import VisionPackError
+
 
 def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -214,7 +216,24 @@ class Asset:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    @property
+    def is_remote(self) -> bool:
+        """True when the bytes live in a remote object store, not on local disk.
+
+        ``copy``/``reference`` sync against a cloud target records the object's
+        URI as ``path`` (e.g. ``s3://...``); such assets can't be opened as a
+        local file. ``file://`` is local and excluded.
+        """
+        scheme, sep, _ = self.path.partition("://")
+        return bool(sep) and scheme != "file" and "/" not in scheme and "\\" not in scheme
+
     def resolved_path(self, root: Path) -> Path:
+        if self.is_remote:
+            raise VisionPackError(
+                f"Asset {self.id} lives in a remote object store ({self.path}); "
+                "local export/pack of cloud-backed assets isn't supported yet "
+                "(use manifest/streaming export — see docs/SPEC-cloud-sync.md)."
+            )
         path = Path(self.path)
         return path if path.is_absolute() else root / path
 

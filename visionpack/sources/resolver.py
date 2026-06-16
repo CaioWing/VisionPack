@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,6 +72,16 @@ class Resolver(ABC):
     def read_bytes(self, uri: str) -> bytes: ...
 
     @abstractmethod
+    def server_copy(self, src_uri: str, dst_uri: str) -> None:
+        """Copy ``src_uri`` to ``dst_uri`` without routing the bytes through us.
+
+        Same-provider only (v1): the copy happens inside the backend (S3
+        ``CopyObject`` / GCS rewrite / a local filesystem copy), so the client
+        never downloads-then-uploads. Used by ``sync`` to land objects in a
+        content-addressed target bucket (see docs/SPEC-cloud-sync.md).
+        """
+
+    @abstractmethod
     def local_path(self, uri: str) -> Path | None:
         """Local filesystem path for ``uri`` if one exists, else ``None``.
 
@@ -121,6 +132,11 @@ class LocalResolver(Resolver):
 
     def read_bytes(self, uri: str) -> bytes:
         return self._path(uri).read_bytes()
+
+    def server_copy(self, src_uri: str, dst_uri: str) -> None:
+        dst = self._path(dst_uri)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self._path(src_uri), dst)
 
     def local_path(self, uri: str) -> Path | None:
         return self._path(uri)
@@ -201,6 +217,19 @@ class FsspecResolver(Resolver):
         fs, path = self._fs_and_path(uri)
         return fs.cat_file(path)
 
+    def server_copy(self, src_uri: str, dst_uri: str) -> None:
+        src_fs, src_path = self._fs_and_path(src_uri)
+        dst_fs, dst_path = self._fs_and_path(dst_uri)
+        # v1 is same-provider: a cross-provider copy can't be server-side (it
+        # would have to transit the client), so refuse it loudly rather than
+        # silently downloading-then-uploading.
+        if type(src_fs) is not type(dst_fs):
+            raise VisionPackError(
+                f"Server-side copy needs source and target on the same provider "
+                f"(got {src_uri!r} -> {dst_uri!r}); cross-cloud transfer is not supported in v1."
+            )
+        dst_fs.copy(src_path, dst_path)
+
     def local_path(self, uri: str) -> Path | None:
         # Remote objects have no local path; ingest works from in-memory bytes.
         return None
@@ -218,9 +247,14 @@ def scheme_of(uri: str) -> str:
     return parsed.scheme.lower()
 
 
-# Schemes we intend to support via fsspec extras in Phase 2. Listed so the error
-# message can point users at the right install instead of a generic failure.
+# Schemes we intend to support via fsspec extras. Listed so the error message can
+# point users at the right install instead of a generic failure.
 _REMOTE_EXTRAS = {"s3": "s3", "gs": "gcs", "gcs": "gcs", "az": "azure", "abfs": "azure", "git": "git"}
+
+# Schemes fsspec handles in-process with no provider library — `memory` is the
+# in-memory filesystem the cloud paths are tested against, so it must resolve
+# like any other backend (no extra to install).
+_BUILTIN_FSSPEC = {"memory"}
 
 
 def get_resolver(uri: str, storage_options: dict[str, Any] | None = None) -> Resolver:
@@ -228,13 +262,11 @@ def get_resolver(uri: str, storage_options: dict[str, Any] | None = None) -> Res
     if scheme in ("", "file"):
         return LocalResolver()
     extra = _REMOTE_EXTRAS.get(scheme)
-    if extra is None:
+    if extra is None and scheme not in _BUILTIN_FSSPEC:
         raise VisionPackError(f"Unsupported source scheme {scheme!r} in URI: {uri}")
     try:
         import fsspec  # noqa: F401
     except ModuleNotFoundError as exc:
-        raise VisionPackError(
-            f"Source scheme {scheme!r} needs the optional backend. "
-            f"Install it with: pip install 'visionpack[{extra}]'."
-        ) from exc
+        hint = f"Install it with: pip install 'visionpack[{extra}]'." if extra else "Install fsspec."
+        raise VisionPackError(f"Source scheme {scheme!r} needs the optional backend. {hint}") from exc
     return FsspecResolver(scheme, storage_options)

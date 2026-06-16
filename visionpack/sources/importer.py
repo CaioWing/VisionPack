@@ -18,6 +18,7 @@ from visionpack.progress import ProgressCallback
 from visionpack.sources.join import join_refs
 from visionpack.sources.resolver import FileRef, Resolver, get_resolver, scheme_of
 from visionpack.sources.schema import Location, Source
+from visionpack.sources.target import CloudTarget
 from visionpack.storage.hash import sha256_bytes
 
 _LABEL_SUFFIXES = {".txt"}
@@ -70,6 +71,9 @@ class SourceSyncer:
         # Manifest paths are project-relative; resolve them against the project
         # root (not the cwd) so `vp sync` works from any directory.
         self.source = _rebase_source(source, project.root)
+        # The cloud sink for `copy` mode, built only when one is actually needed
+        # (copy + a declared target); otherwise objects stay in the local CAS.
+        self._target = self._build_target()
 
     # -- resolvers ------------------------------------------------------------
 
@@ -79,18 +83,29 @@ class SourceSyncer:
         All resolver access goes through here so cloud auth declared in the YAML
         actually reaches the provider filesystem (the schema promises it).
         """
-        return get_resolver(loc.resolved_uri(), self._storage_options(loc))
+        return get_resolver(loc.resolved_uri(), _resolver_options(loc, self.source.credentials))
 
-    def _storage_options(self, loc: Location) -> dict[str, Any]:
-        # Source-level credentials are the base; per-location ones override. The
-        # dict is forwarded verbatim to fsspec, so users have full control over
-        # provider-specific keys; `region` is mapped to the one spot S3 reads it.
-        options: dict[str, Any] = {**self.source.credentials, **loc.credentials}
-        if loc.region and scheme_of(loc.resolved_uri()) == "s3":
-            client_kwargs = dict(options.get("client_kwargs", {}))
-            client_kwargs.setdefault("region_name", loc.region)
-            options["client_kwargs"] = client_kwargs
-        return options
+    def _build_target(self) -> CloudTarget | None:
+        # A target only matters for `copy`; `reference`/`ingest` never write to it.
+        if self.source.copy != "copy" or not self.project.manifest.target:
+            return None
+        loc = _rebase_location(Location.parse(self.project.manifest.target), self.project.root)
+        assert loc is not None  # parse of a non-empty value is never None
+        target_uri = loc.resolved_uri()
+        # v1 is same-provider: a server-side copy can't bridge two providers, so
+        # reject e.g. a local source feeding an s3 target up front.
+        src_scheme = self._source_scheme()
+        if src_scheme != scheme_of(target_uri):
+            raise VisionPackError(
+                f"Source {self.source.name!r} copies into target {target_uri!r}, but the source "
+                f"({src_scheme or 'local'}) and target ({scheme_of(target_uri) or 'local'}) are different "
+                "providers; v1 supports same-provider copy only."
+            )
+        return CloudTarget(base_uri=target_uri, resolver=get_resolver(target_uri, _resolver_options(loc)))
+
+    def _source_scheme(self) -> str:
+        loc = self.source.images or self.source.root
+        return scheme_of(loc.resolved_uri()) if loc is not None else ""
 
     # -- public ---------------------------------------------------------------
 
@@ -256,8 +271,7 @@ class SourceSyncer:
         data = image_res.read_bytes(image_ref.uri)
         digest = sha256_bytes(data)
         width, height, channels, image_format = image_info_from_bytes(data, Path(image_ref.uri))
-        local = image_res.local_path(image_ref.uri) or Path(image_ref.uri)
-        stored_path = self.project.object_store.store(local, digest, self.source.copy, data=data)
+        stored_path = self._store_blob(image_ref, image_res, data, digest)
         full = {
             "sha256": digest,
             "width": width,
@@ -271,16 +285,38 @@ class SourceSyncer:
         cache_probe = {key: full[key] for key in _PROBE_KEYS}
         return full, (image_ref.uri, stat.etag, stat.size, cache_probe)
 
+    def _store_blob(self, image_ref: FileRef, image_res: Resolver, data: bytes, digest: str) -> str:
+        """Materialize the just-read bytes and return the asset ``path``.
+
+        ``reference`` keeps no copy; cloud ``copy`` lands the object in the target
+        CAS server-side (the bytes never transit the client — we only read them
+        once, above, for the hash); everything else writes the local CAS.
+        """
+        if self.source.copy == "reference":
+            return self._reference_path(image_ref, image_res)
+        if self._target is not None:  # copy + a declared target
+            return self._target.ensure_object(image_ref.uri, digest)
+        local = image_res.local_path(image_ref.uri) or Path(image_ref.uri)
+        return self.project.object_store.store(local, digest, self.source.copy, data=data)
+
+    def _reference_path(self, image_ref: FileRef, image_res: Resolver) -> str:
+        # The index points straight at the source: a local path when we have one,
+        # otherwise the remote object URI as-is.
+        local = image_res.local_path(image_ref.uri)
+        return str(local.resolve()) if local is not None else image_ref.uri
+
     def _reuse_stored(self, sha256: str, image_ref: FileRef, image_res: Resolver) -> str | None:
         """The asset ``path`` to reuse on a cache hit, or ``None`` if it's gone.
 
-        A cached probe is only usable if the bytes it points at still exist. For
-        CAS modes that means the object is still in the store; for ``reference``
-        the path is the source itself, reusable while it still resolves locally.
+        A cached probe is only usable if the bytes it points at still exist. The
+        local CAS is cheaply checked; the cloud target is an immutable CAS we
+        already wrote, so a warm cache is trusted without a per-object HEAD
+        (keeping re-sync metadata-only).
         """
         if self.source.copy == "reference":
-            local = image_res.local_path(image_ref.uri)
-            return str(local.resolve()) if local is not None else None
+            return self._reference_path(image_ref, image_res)
+        if self._target is not None:
+            return self._target.object_uri(sha256)
         if self.project.object_store.object_path(sha256).exists():
             return self.project.object_store.relpath(sha256)
         return None
@@ -494,6 +530,17 @@ class SourceSyncer:
         self.project.index.save()
         if summary.classes_added:
             self.project.save_manifest()
+
+
+def _resolver_options(loc: Location, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    """fsspec ``storage_options`` for ``loc``: ``base`` creds overlaid by the
+    location's own, with ``region`` mapped to where S3 reads it."""
+    options: dict[str, Any] = {**(base or {}), **loc.credentials}
+    if loc.region and scheme_of(loc.resolved_uri()) == "s3":
+        client_kwargs = dict(options.get("client_kwargs", {}))
+        client_kwargs.setdefault("region_name", loc.region)
+        options["client_kwargs"] = client_kwargs
+    return options
 
 
 def _rebase_location(loc: Location | None, root: Path) -> Location | None:

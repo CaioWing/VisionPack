@@ -75,6 +75,9 @@ class _ManifestModel(BaseModel):
     task: str = "detection"
     classes: list[_ClassDefModel] = Field(default_factory=list)
     sources: list[_SourceModel] = Field(default_factory=list)
+    # Where `copy`-mode sync lands objects, content-addressed and server-side
+    # (e.g. s3://my-bucket/datasets/foo). Omit to keep objects in the local CAS.
+    target: _LocationField | None = None
     storage: dict[str, Any] = Field(default_factory=lambda: {"mode": "content-addressed", "hash": "sha256"})
     validation: dict[str, Any] = Field(default_factory=dict)
     splits: dict[str, Any] = Field(default_factory=dict)
@@ -90,6 +93,7 @@ class Manifest:
     task: str = "detection"
     classes: list[ClassDef] = field(default_factory=list)
     sources: list[dict[str, Any]] = field(default_factory=list)
+    target: str | dict[str, Any] | None = None
     storage: dict[str, Any] = field(default_factory=lambda: {"mode": "content-addressed", "hash": "sha256"})
     validation: dict[str, Any] = field(default_factory=dict)
     splits: dict[str, Any] = field(default_factory=dict)
@@ -137,6 +141,13 @@ class Manifest:
             task=model.task,
             classes=[ClassDef(id=item.id, name=item.name or item.id) for item in model.classes],
             sources=[source.model_dump(by_alias=True, exclude_none=True) for source in model.sources],
+            target=(
+                None
+                if model.target is None
+                else model.target
+                if isinstance(model.target, str)
+                else model.target.model_dump(exclude_none=True)
+            ),
             storage=model.storage,
             validation=model.validation,
             splits=model.splits,
@@ -152,6 +163,7 @@ class Manifest:
             "task": self.task,
             "classes": [item.to_dict() for item in self.classes],
             "sources": self.sources,
+            "target": self.target,
             "storage": self.storage,
             "validation": self.validation,
             "splits": self.splits,
@@ -210,6 +222,7 @@ def read_manifest(path: Path) -> Manifest:
 _SECTION_COMMENTS: list[tuple[str, str]] = [
     ("classes", "Classes. Merged by name across sources; ids are slugs."),
     ("sources", "Sources: where images & labels come from. `vp sync` reconciles these."),
+    ("target", "Content-addressed sink for `copy`-mode sync (e.g. an S3 bucket)."),
     ("splits", "Train / val / test splits (vp split create)."),
     ("validation", "Validation policy (vp validate)."),
     ("exports", "Export options (vp export)."),
