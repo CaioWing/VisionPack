@@ -1,0 +1,12 @@
+# Local preview only — GitHub's classic Pages build ignores this file and uses
+# the github-pages gem. To preview the site locally:
+#
+#   cd docs && bundle install && bundle exec jekyll serve
+#
+# then open http://127.0.0.1:4000/VisionPack/
+source "https://rubygems.org"
+
+gem "jekyll", "~> 4.3"
+gem "just-the-docs", "~> 0.10"
+gem "jekyll-remote-theme"
+gem "jekyll-seo-tag"

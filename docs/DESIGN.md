@@ -1,8 +1,14 @@
+---
+title: Design Rationale
+nav_order: 6
+---
+
 # VisionPack — Original Product Specification (PT-BR)
 
 > This is the original design document that scoped VisionPack. It is preserved
 > verbatim as the product vision. For current architecture and status see
-> [ARCHITECTURE.md](../ARCHITECTURE.md); for usage see the [README](../README.md).
+> [ARCHITECTURE.md](https://github.com/CaioWing/VisionPack/blob/main/ARCHITECTURE.md);
+> for usage see the [CLI Guide]({% link usage.md %}).
 
 ## 1. Objetivo
 

@@ -1,4 +1,9 @@
-# VisionPack Usage Guide
+---
+title: CLI Guide
+nav_order: 4
+---
+
+# VisionPack CLI Guide
 
 VisionPack is a CLI-first DatasetOps tool for computer vision datasets. It supports
 local projects across classification, detection, instance segmentation, and
@@ -7,29 +12,35 @@ sync; validation (including near-duplicate and cross-split leakage detection);
 statistics; deterministic splits; snapshots and snapshot diffs; and archive and
 WebDataset training packs.
 
-For architecture and the roadmap see [ARCHITECTURE.md](../ARCHITECTURE.md).
+For architecture and the roadmap see
+[ARCHITECTURE.md](https://github.com/CaioWing/VisionPack/blob/main/ARCHITECTURE.md).
 
-## Install For Development
+## Install
 
-From the repository root:
+```bash
+pip install visionpack
+```
+
+Cloud backends are optional extras: `pip install "visionpack[s3]"` (also `[gcs]`,
+`[azure]`). See [Installation]({% link installation.md %}) for details.
+
+For development from source with [`uv`](https://github.com/astral-sh/uv):
 
 ```bash
 uv sync
 uv run vp --help
+uv run python -m visionpack --help   # or run the module directly
 ```
 
-You can also run the module directly:
-
-```bash
-uv run python -m visionpack --help
-```
+The examples below use the bare `vp` command; prefix with `uv run` when working
+from a source checkout.
 
 ## Initialize A Dataset
 
 Create a VisionPack project in the current directory:
 
 ```bash
-uv run vp init --name factory-defects --task detection
+vp init --name factory-defects --task detection
 ```
 
 This creates a git-like layout — just the manifest and a control directory:
@@ -72,14 +83,14 @@ raw/
 Import the dataset:
 
 ```bash
-uv run vp import ./raw --format yolo
+vp import ./raw --format yolo
 ```
 
 By default, VisionPack ingests images into `.vp/objects/sha256` and indexes them by content hash. You can choose another copy mode:
 
 ```bash
-uv run vp import ./raw --format yolo --copy hardlink
-uv run vp import ./raw --format yolo --copy reference
+vp import ./raw --format yolo --copy hardlink
+vp import ./raw --format yolo --copy reference
 ```
 
 Available copy modes are `copy`, `move`, `hardlink`, `reference`, and `ingest`.
@@ -105,29 +116,46 @@ sources:
 ```
 
 ```bash
-uv run vp sync --dry-run   # preview found / matched / unmatched / classes per source
-uv run vp sync             # ingest; idempotent, records per-asset provenance
-uv run vp sync --source camera-A   # sync just one source
+vp sync --dry-run   # preview found / matched / unmatched / classes per source
+vp sync             # ingest; idempotent, records per-asset provenance
+vp sync --source camera-A   # sync just one source
 ```
+
+Sources can also live in object stores. Remote URIs go anywhere a local path
+would, and a `target:` lets `copy` mode land objects server-side in a
+content-addressed bucket without downloading them:
+
+```yaml
+target: s3://my-bucket/datasets/factory-defects
+sources:
+  - name: camera-A
+    format: yolo
+    images: s3://my-bucket/raw/camera-a/images
+    labels: s3://my-bucket/raw/camera-a/labels
+    copy: copy
+```
+
+See [Cloud Sync]({% link cloud-sync.md %}) for credentials, copy modes, and
+streaming export.
 
 ## Validate
 
 Run validation:
 
 ```bash
-uv run vp validate
+vp validate
 ```
 
 Strict mode treats missing annotations as errors:
 
 ```bash
-uv run vp validate --strict
+vp validate --strict
 ```
 
 Write a JSON validation report:
 
 ```bash
-uv run vp validate --report reports/validation.json
+vp validate --report reports/validation.json
 ```
 
 The current validator checks image readability, missing annotations, orphan labels, unknown classes, invalid boxes, boxes outside image bounds, duplicate exact assets, and split leakage.
@@ -137,19 +165,19 @@ The current validator checks image readability, missing annotations, orphan labe
 Print a summary:
 
 ```bash
-uv run vp stats
+vp stats
 ```
 
 Class distribution:
 
 ```bash
-uv run vp stats --by class
+vp stats --by class
 ```
 
 JSON output:
 
 ```bash
-uv run vp stats --json
+vp stats --json
 ```
 
 ## Create Snapshots
@@ -157,19 +185,19 @@ uv run vp stats --json
 Create a reproducible dataset snapshot:
 
 ```bash
-uv run vp snapshot create -m "initial import"
+vp snapshot create -m "initial import"
 ```
 
 List snapshots:
 
 ```bash
-uv run vp snapshot list
+vp snapshot list
 ```
 
 Show one snapshot:
 
 ```bash
-uv run vp snapshot show v1
+vp snapshot show v1
 ```
 
 Snapshots store hashes for the manifest, assets, annotations, splits, and summary stats. They are written to `.vp/snapshots/`.
@@ -179,13 +207,13 @@ Snapshots store hashes for the manifest, assets, annotations, splits, and summar
 Compare two snapshots:
 
 ```bash
-uv run vp diff v1 v2
+vp diff v1 v2
 ```
 
 JSON diff:
 
 ```bash
-uv run vp diff v1 v2 --json
+vp diff v1 v2 --json
 ```
 
 The diff reports added and removed assets, added/removed/modified annotations, class changes, split changes, and before/after stats.
@@ -195,7 +223,7 @@ The diff reports added and removed assets, added/removed/modified annotations, c
 Export the indexed dataset back to YOLO format:
 
 ```bash
-uv run vp export --format yolo --output exports/yolo-v1
+vp export --format yolo --output exports/yolo-v1
 ```
 
 The export writes:
@@ -208,18 +236,23 @@ exports/yolo-v1/
   data.yaml
 ```
 
+Exports never duplicate bytes: **local** images are hardlinked from the
+content-addressed store, and **cloud-backed** images are written to a
+`manifest.jsonl` (image → object URI) for streaming instead of being downloaded.
+See [Cloud Sync]({% link cloud-sync.md %}#export-for-training-streaming).
+
 ## Pack Archive
 
 Create a compressed archive package:
 
 ```bash
-uv run vp pack --profile archive
+vp pack --profile archive
 ```
 
 Or choose an output path:
 
 ```bash
-uv run vp pack --profile archive --output exports/archive/factory-defects.tar.zst
+vp pack --profile archive --output exports/archive/factory-defects.tar.zst
 ```
 
 The archive includes:
@@ -251,8 +284,10 @@ More stable SDK methods will be added as the internal workflows settle.
 - YOLO import/export is detection-only (no YOLO-seg / YOLO-pose yet)
 - `--format auto` detection is not implemented; pass `--format` explicitly
 - `vp annotate` is scaffolded but not implemented yet
-- remote source backends (S3/GCS/Azure/git) are planned; sources are local for now
+- cloud sync (S3/GCS/Azure) is **same-provider** in v1 — cross-cloud transfer
+  (S3↔GCS) and remote COCO/ImageFolder sync are planned; `pack` is local-only
 - `vp eval` (scoring predictions into benchmark metrics) is planned
 - the local index is SQLite (`index.db`); `stats` and exports stream records (flat
   RAM at scale), while `validate`, `split`, dedup, and the WebDataset pack still load
-  the full set (next streaming pass — see [ARCHITECTURE.md](../ARCHITECTURE.md))
+  the full set (next streaming pass — see
+  [ARCHITECTURE.md](https://github.com/CaioWing/VisionPack/blob/main/ARCHITECTURE.md))
