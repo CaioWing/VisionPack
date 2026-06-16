@@ -16,6 +16,13 @@ class ObjectStore:
     def object_path(self, sha256: str) -> Path:
         return self.objects_root / sha256[:2] / sha256[2:4] / sha256
 
+    def relpath(self, sha256: str) -> str:
+        """The stored path a CAS-backed `store` would return for this hash.
+
+        Lets a cache hit rebuild an asset's `path` without re-reading the body.
+        """
+        return str(self.object_path(sha256).relative_to(self.root))
+
     def store(self, source: Path, sha256: str, mode: CopyMode = "ingest", data: bytes | None = None) -> str:
         if mode == "reference":
             return str(source.resolve())

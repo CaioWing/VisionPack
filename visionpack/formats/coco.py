@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -13,6 +12,7 @@ from visionpack.core.manifest import class_id_from_name
 from visionpack.core.models import Annotation, Asset, BBox, Geometry, Keypoints, ObjectAnnotation, Polygon, utc_now
 from visionpack.core.project import Project
 from visionpack.formats.base import ImportSummary, IngestFailure
+from visionpack.formats.materialize import AssetMaterializer
 from visionpack.media import image_info_from_bytes
 from visionpack.perceptual import dhash_bytes
 from visionpack.progress import ProgressCallback
@@ -35,7 +35,7 @@ class CocoImporter:
         self.project = project
         self.source = source.resolve()
         self.images_dir = images_dir.resolve()
-        self.copy_mode = copy_mode
+        self.copy_mode: CopyMode = copy_mode
 
     def run(self, progress: ProgressCallback | None = None) -> ImportSummary:
         if not self.source.exists():
@@ -173,6 +173,7 @@ def export_coco(
     categories = [{"id": index + 1, "name": item.name, "supercategory": ""} for index, item in enumerate(classes)]
 
     set_for_asset, _ = resolve_export_sets(project, split_id)
+    materializer = AssetMaterializer(output, project.root)
 
     # Accumulate images/annotations per set; flat export uses a single bucket.
     buckets: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: {"images": [], "annotations": []})
@@ -193,10 +194,9 @@ def export_coco(
             continue
         images_dir = output / "images" / set_name if split_id else output / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
-        source = asset.resolved_path(project.root)
         suffix = Path(asset.original_path).suffix.lower() or f".{asset.format}"
         file_name = f"{asset.id}{suffix}"
-        shutil.copy2(source, images_dir / file_name)
+        materializer.place(asset, images_dir / file_name, {"set": set_name})
 
         image_id = next_image_id[set_name]
         next_image_id[set_name] += 1
@@ -250,7 +250,10 @@ def export_coco(
         total_annotations += len(content["annotations"])
         per_set[set_name] = len(content["images"])
 
+    streamed = materializer.flush()
     result: dict[str, Any] = {"images": total_images, "annotations": total_annotations, "objects": exported_objects}
+    if streamed:
+        result["streamed"] = streamed
     if split_id:
         result["sets"] = per_set
         result["skipped"] = skipped

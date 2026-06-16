@@ -48,6 +48,13 @@ def run(args: argparse.Namespace) -> int:
             message = f"Exported YOLO dataset to {output.resolve()}: {detail}"
     print(message)
 
+    streamed = summary.get("streamed")
+    if streamed:
+        print(
+            f"{streamed} cloud-backed image(s) were not copied; their URIs were written to "
+            f"{(output / 'manifest.jsonl').resolve()} for streaming."
+        )
+
     if args.split:
         sets = ", ".join(f"{name}={count}" for name, count in summary.get("sets", {}).items())
         print(f"Split {args.split!r}: {sets}")
