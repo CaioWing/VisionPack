@@ -9,8 +9,7 @@ original product vision see [docs/DESIGN.md](docs/DESIGN.md).
 ## Design principles
 
 1. **CLI-first.** The primary interface is the `vp` command, scriptable in
-   notebooks, training servers, and CI. The web UI (`vp serve`) is an optional
-   extra and a *view* over the same core operations — the core never imports it.
+   notebooks, training servers, and CI. No web app in the core.
 2. **The manifest is the source of truth.** `visionpack.yaml` declares the dataset
    (classes, sources, splits, validation policy, pack profiles). Behaviour is
    driven by the manifest + the internal index, never by "a folder with the right
@@ -53,10 +52,6 @@ visionpack/
     resolver.py  schema.py  join.py  importer.py   # declarative multi-source sync
   validation/
     engine.py            # the validate_project check suite
-  server/
-    app.py               # FastAPI app: REST API over the core operations
-    jobs.py              # background jobs (sync/validate/export) with progress
-    static/index.html    # the single-file web dashboard (`vp serve`)
   packing/
     archive.py  webdataset.py             # pack profiles (archive, training)
   perceptual.py          # dHash perceptual hashing
@@ -158,18 +153,6 @@ GCS rewrite — bytes never transit the client). Cross-provider transfers
 (local→S3, S3→GCS, …) *relay* the bytes sync already read to compute the sha256:
 one read (needed anyway) + one upload, never a second download. Either way an
 unchanged re-sync stays metadata-only.
-
-### API server & web UI (`server/`)
-`vp serve` hosts a FastAPI app (optional `[server]` extra) plus a dependency-free
-single-file dashboard. The API is a thin layer over the same core functions the
-CLI calls — `plan_sources`/`sync_sources`, `validate_project`, `create_split`,
-`create_snapshot`, the exporters — so behaviour can't drift between surfaces.
-Long operations run as background jobs (one at a time, mirroring the
-single-writer project lock, which they also take) with `(done, total)` progress
-the UI polls. Credentials declared in the manifest are stripped from every
-response; `GET /api/assets/{id}/file` streams image bytes from the local CAS or
-any provider via the resolver layer, which is what makes the gallery
-provider-agnostic.
 
 ### Geometry model & task coverage (`core/models.py`, `formats/`)
 The tagged geometry above lets one dataset model cover the common CV tasks.
@@ -287,9 +270,6 @@ The roadmap is sequenced so each phase unblocks the next.
 - [ ] Hugging Face Datasets export
 
 ### Phase C — Reporting & polish
-- [x] web dashboard + REST API (`vp serve`, optional `[server]` extra): pipeline
-      board, dry-run previews, background jobs with progress, stats, gallery,
-      splits/snapshots — a UI layer over the same core functions the CLI calls
 - [ ] HTML validation / stats / drift reports
 - [ ] JSON report output for stats and diff
 - [ ] richer terminal output with `rich`

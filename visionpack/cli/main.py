@@ -15,7 +15,6 @@ from visionpack.cli.commands import (
     init,
     pack,
     queue,
-    serve,
     snapshot,
     split,
     stats,
@@ -57,7 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
     eval_.register(subparsers)
     autolabel.register(subparsers)
     queue.register(subparsers)
-    serve.register(subparsers)
     return parser
 
 
