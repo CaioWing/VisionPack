@@ -6,6 +6,7 @@ from pathlib import Path
 from visionpack.core.project import Project
 from visionpack.formats.classification import export_imagefolder
 from visionpack.formats.coco import export_coco
+from visionpack.formats.masks import export_masks
 from visionpack.formats.yolo import export_yolo
 from visionpack.progress import cli_progress
 from visionpack.snapshot import open_snapshot
@@ -13,8 +14,14 @@ from visionpack.snapshot import open_snapshot
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("export", help="Export a dataset")
-    parser.add_argument("--format", required=True, choices=["yolo", "coco", "imagefolder"], help="Output format")
+    parser.add_argument("--format", required=True, choices=["yolo", "coco", "imagefolder", "masks"], help="Output format")
     parser.add_argument("--output", required=True, help="Output directory")
+    parser.add_argument(
+        "--seg",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="YOLO only: write YOLO-seg polygon labels (defaults to on for segmentation projects)",
+    )
     parser.add_argument(
         "--split",
         nargs="?",
@@ -42,8 +49,12 @@ def run(args: argparse.Namespace) -> int:
         elif args.format == "imagefolder":
             summary = export_imagefolder(project, output, split_id=args.split, progress=callback)
             message = f"Exported ImageFolder dataset to {output.resolve()}: {summary['images']} images"
+        elif args.format == "masks":
+            summary = export_masks(project, output, split_id=args.split, progress=callback)
+            detail = f"{summary['images']} images, {summary['masks']} masks, {summary['objects']} objects"
+            message = f"Exported semantic masks to {output.resolve()}: {detail}"
         else:
-            summary = export_yolo(project, output, split_id=args.split, progress=callback)
+            summary = export_yolo(project, output, split_id=args.split, progress=callback, seg=args.seg)
             detail = f"{summary['images']} images, {summary['labels']} label files, {summary['objects']} objects"
             message = f"Exported YOLO dataset to {output.resolve()}: {detail}"
     print(message)

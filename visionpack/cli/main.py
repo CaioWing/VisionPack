@@ -2,14 +2,43 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _package_version
 
-from visionpack.cli.commands import annotate, diff, export, fsck, import_, init, pack, snapshot, split, stats, sync, validate
+from visionpack.cli.commands import (
+    annotate,
+    autolabel,
+    diff,
+    export,
+    fsck,
+    import_,
+    init,
+    pack,
+    queue,
+    snapshot,
+    split,
+    stats,
+    sync,
+    validate,
+)
+from visionpack.cli.commands import (
+    eval as eval_,
+)
 from visionpack.core.errors import VisionPackError
+
+
+def _version() -> str:
+    # Single source of truth is pyproject.toml; a source tree that was never
+    # installed (no dist metadata) reports a dev placeholder instead of lying.
+    try:
+        return _package_version("visionpack")
+    except PackageNotFoundError:
+        return "0.0.0+dev"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="vp", description="VisionPack DatasetOps CLI")
-    parser.add_argument("--version", action="version", version="visionpack 0.1.0")
+    parser.add_argument("--version", action="version", version=f"visionpack {_version()}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init.register(subparsers)
@@ -24,6 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     export.register(subparsers)
     pack.register(subparsers)
     annotate.register(subparsers)
+    eval_.register(subparsers)
+    autolabel.register(subparsers)
+    queue.register(subparsers)
     return parser
 
 

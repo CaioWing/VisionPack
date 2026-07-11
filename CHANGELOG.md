@@ -4,7 +4,33 @@ All notable changes to VisionPack are tracked here.
 
 ## [Unreleased]
 
-- Nothing yet.
+- Model-in-the-loop foundation: a shared predictions loader
+  (`visionpack/predictions.py`) reads model output in three formats — vp-native
+  JSON, COCO results/instances JSON, and YOLO txt directories (what Ultralytics
+  `predict` writes with `save_txt`/`save_conf`) — and resolves images to assets
+  by asset id or original filename.
+- `vp eval`: score predictions against a split's labels, turning a locked split
+  + snapshot into a reproducible benchmark. Detection/segmentation/keypoints get
+  COCO-style AP (per-class AP@50, mAP@50, mAP@50-95, precision/recall at a
+  confidence threshold); classification gets accuracy, per-class P/R/F1 and a
+  confusion matrix. `--json` for machine-readable output.
+- `vp autolabel`: persist confident predictions as annotations with
+  `source.type = "model"` (auditable, distinguishable from human labels). Only
+  unlabeled assets are touched unless `--replace`; `--min-confidence` filters
+  objects.
+- `vp queue`: active-learning queue that ranks images by annotation value —
+  unlabeled images first (by model uncertainty when predictions are given), and
+  with `--include-labeled` audits labeled images for ground-truth/prediction
+  disagreement (possible missing or stale labels).
+- YOLO-seg: YOLO imports now accept polygon label lines
+  (`class x1 y1 x2 y2 ...`) as instance-segmentation geometry, and `vp export
+  --format yolo` writes YOLO-seg labels for segmentation projects (or with
+  `--seg`); plain boxes degrade to four-corner polygons.
+- Semantic masks: `vp export --format masks` rasterizes polygon (and box)
+  annotations into 8-bit class-index PNGs (0 = background), split-aware, with a
+  `classes.txt` documenting the pixel-value mapping.
+- `vp --version` now reports the installed package version (was hardcoded and
+  out of sync with `pyproject.toml`); removed duplicated README sections.
 - Cloud sync foundation (PR 1 of docs/SPEC-cloud-sync.md): `FsspecResolver` for
   remote schemes (`s3://`, `gs://`, `az://`) behind optional extras
   (`visionpack[s3]`, `[gcs]`, `[azure]`); `Resolver.stat` for metadata-only

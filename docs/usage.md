@@ -241,6 +241,58 @@ content-addressed store, and **cloud-backed** images are written to a
 `manifest.jsonl` (image → object URI) for streaming instead of being downloaded.
 See [Cloud Sync]({% link cloud-sync.md %}#export-for-training-streaming).
 
+Segmentation projects export YOLO-seg polygon labels automatically (force either
+way with `--seg` / `--no-seg`), and `--format masks` writes semantic masks —
+8-bit PNGs whose pixel value is the class index (0 = background, mapping recorded
+in `classes.txt`):
+
+```bash
+vp export --format yolo --output exports/seg-v1 --split      # YOLO-seg labels
+vp export --format masks --output exports/masks-v1 --split   # class-index PNGs
+```
+
+## Evaluate A Model (vp eval)
+
+Score model predictions against the labels of a split's set (the test set by
+default) — a locked split plus a snapshot makes the number a reproducible
+benchmark:
+
+```bash
+vp eval runs/predict/labels --format yolo         # Ultralytics save_txt output
+vp eval predictions.json                          # vp-native or COCO JSON
+vp eval predictions.json --split default --set val --json
+```
+
+Detection, segmentation, and keypoints report per-class AP@50, mAP@50,
+mAP@50-95, and precision/recall at a confidence threshold (`--conf`);
+classification reports accuracy, per-class precision/recall/F1, and a confusion
+matrix. Predictions reference images by asset id (what exports name files) or by
+original filename; unresolvable references are reported, never dropped silently.
+
+## Autolabel & The Annotation Queue
+
+`vp autolabel` persists confident predictions as annotations. Model labels are
+recorded with `source.type = "model"`, so they stay distinguishable from human
+labels. Only unlabeled assets are touched unless you pass `--replace`:
+
+```bash
+vp autolabel predictions.json --min-confidence 0.6
+```
+
+`vp queue` ranks images by how much a human label would help (active learning):
+unlabeled images first — ordered by model uncertainty when predictions are given
+— and with `--include-labeled` it audits existing labels for ground-truth /
+prediction disagreement (possible missing or stale labels):
+
+```bash
+vp queue --predictions predictions.json --limit 20
+vp queue --predictions predictions.json --include-labeled --json
+```
+
+Together these close the model-in-the-loop cycle: export → train/predict →
+`vp eval` (measure) → `vp autolabel` (label the easy images) → `vp queue`
+(send the hard ones to humans) → re-train.
+
 ## Pack Archive
 
 Create a compressed archive package:
@@ -279,14 +331,14 @@ More stable SDK methods will be added as the internal workflows settle.
 
 ## Current Limitations
 
-- semantic segmentation (per-class mask PNGs) is not yet supported; instance
-  segmentation (polygons) and keypoints are supported via COCO
-- YOLO import/export is detection-only (no YOLO-seg / YOLO-pose yet)
-- `--format auto` detection is not implemented; pass `--format` explicitly
+- segmentation metrics in `vp eval` use each polygon's enclosing box (mask IoU
+  is planned); YOLO-pose import/export and a dedicated keypoint importer are
+  not implemented yet
+- `--format auto` detection on import is not implemented; pass `--format`
+  explicitly (predictions for `vp eval`/`autolabel`/`queue` *are* auto-detected)
 - `vp annotate` is scaffolded but not implemented yet
 - cloud sync (S3/GCS/Azure) is **same-provider** in v1 — cross-cloud transfer
   (S3↔GCS) and remote COCO/ImageFolder sync are planned; `pack` is local-only
-- `vp eval` (scoring predictions into benchmark metrics) is planned
 - the local index is SQLite (`index.db`); `stats` and exports stream records (flat
   RAM at scale), while `validate`, `split`, dedup, and the WebDataset pack still load
   the full set (next streaming pass — see

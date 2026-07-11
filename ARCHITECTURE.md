@@ -32,7 +32,8 @@ visionpack/
   cli/
     main.py              # argparse wiring; registers every subcommand
     commands/            # one module per command (init, import, sync, validate,
-                         #   fsck, stats, split, snapshot, diff, export, pack, annotate)
+                         #   fsck, stats, split, snapshot, diff, export, pack,
+                         #   annotate, eval, autolabel, queue)
   core/
     project.py           # Project: manifest + index + object store handle
     manifest.py          # Manifest dataclass + pydantic schema (sources, classes…)
@@ -45,7 +46,8 @@ visionpack/
   index/
     json_index.py        # local JSON index with cached, O(1) annotation lookups
   formats/
-    yolo.py  coco.py  classification.py   # import + export per format
+    yolo.py  coco.py  classification.py   # import + export per format (yolo covers YOLO-seg)
+    masks.py             # semantic-mask export (class-index PNGs)
   sources/
     resolver.py  schema.py  join.py  importer.py   # declarative multi-source sync
   validation/
@@ -57,6 +59,10 @@ visionpack/
   split.py               # deterministic split creation / resolution
   stats.py               # dataset + per-split statistics
   snapshot.py            # content-addressed snapshots
+  predictions.py         # model-prediction loading (vp/COCO/YOLO) resolved to assets
+  eval.py                # vp eval: AP/mAP, accuracy, confusion matrix vs a split set
+  autolabel.py           # vp autolabel: persist confident predictions as annotations
+  curation.py            # vp queue: active-learning ranking + label-quality audit
 ```
 
 ---
@@ -185,7 +191,7 @@ with a self-describing `dataset.json`.
 
 ## Testing
 
-`unittest` suite under `tests/` (55 tests). Run with:
+`unittest` suite under `tests/`. Run with:
 
 ```bash
 uv run python -m unittest discover -s tests -q
@@ -227,22 +233,27 @@ The roadmap is sequenced so each phase unblocks the next.
 - [x] tagged geometry model (bbox | polygon | keypoints | none), backward compatible
 - [x] classification: ImageFolder import/export
 - [x] instance segmentation (polygons) and keypoints via COCO
-- [ ] semantic segmentation (per-class mask PNGs)
-- [ ] YOLO-seg / YOLO-pose import-export; dedicated keypoint importer
-- [ ] `--format auto` task/format detection
+- [x] semantic segmentation (per-class mask PNGs via `vp export --format masks`)
+- [x] YOLO-seg import-export (polygon label lines; `--seg` / segmentation-task default)
+- [ ] YOLO-pose import-export; dedicated keypoint importer
+- [ ] `--format auto` task/format detection on import (predictions already auto-detect)
 
 ### Phase B — Differentiators
 - [x] near-duplicate & cross-split leakage detection (perceptual-hash tier)
 - [ ] optional embedding tier (CLIP/DINOv2) for semantic near-duplicates
 - [ ] label-health audit (`vp audit`): duplicate/degenerate/edge-pinned boxes,
       aspect-ratio outliers, class imbalance
-- [ ] model-in-the-loop quality (confident detections with no matching label)
+- [x] model-in-the-loop quality (`vp queue --include-labeled`: confident
+      detections with no matching label, and labels the model never finds)
 - [ ] distribution-drift diff between snapshots (per-class deltas / KL)
 - [ ] dataset → model lineage (`vp snapshot tag v4 trained:<run-id>`)
 
-### Benchmarking (planned)
-- [ ] `vp eval` — score predictions against a locked test split (mAP, accuracy,
-      confusion matrix), turning a dataset into a reproducible benchmark
+### Benchmarking
+- [x] `vp eval` — score predictions against a split set (per-class AP@50,
+      mAP@50, mAP@50-95, precision/recall; accuracy + confusion matrix for
+      classification), turning a dataset into a reproducible benchmark.
+      Predictions load from vp JSON, COCO JSON, or YOLO txt (`predictions.py`)
+- [ ] mask IoU for segmentation eval (bbox IoU today)
 - [ ] benchmark objects (snapshot + split + protocol) and a leaderboard
 - [ ] dataset/benchmark cards (`vp card`) for publishable, citable artifacts
 - [ ] Hugging Face Datasets export
@@ -253,8 +264,13 @@ The roadmap is sequenced so each phase unblocks the next.
 - [ ] richer terminal output with `rich`
 - [ ] move CLI plumbing from `argparse` to `typer` once commands stabilize
 
+### Model-in-the-loop ✅ (first slice)
+- [x] `vp autolabel` — persist confident predictions as annotations
+      (`source.type = "model"`, `--min-confidence`, `--replace` opt-in)
+- [x] active-learning queue (`vp queue`) — rank unlabeled images by model
+      uncertainty; audit labeled ones for GT/prediction disagreement
+
 ### Later
 - [ ] `vp annotate prepare` / `ingest`; CVAT and Label Studio packages
-- [ ] active-learning queue (rank unlabeled images by model uncertainty)
 - [ ] remote storage integrations (S3/GCS/Azure) for assets
 - [ ] optional PyTorch dataset helpers
