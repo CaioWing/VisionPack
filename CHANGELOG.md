@@ -4,6 +4,26 @@ All notable changes to VisionPack are tracked here.
 
 ## [Unreleased]
 
+- Python SDK (`visionpack.sdk`): the whole dataset lifecycle behind one class,
+  `VisionPackClient` — init/open, import, sync, validate, audit, stats, splits,
+  snapshots (including read-only `checkout(version)` views), export, and the
+  model loop (evaluate/autolabel/annotation queue). Mutating methods take the
+  same project lock the CLI takes, and summaries come back as the same
+  JSON-friendly shapes the `--json` envelopes carry.
+- `vp audit`: label-health audit (roadmap Phase B) — duplicate same-class boxes,
+  degenerate (tiny) boxes, edge-pinned and whole-image boxes, aspect-ratio
+  outliers, rare classes, and class imbalance. Findings are advisory by default
+  (`--fail-on-findings` gates CI); thresholds configurable via flags or
+  `validation.audit` in `visionpack.yaml`; `--json` supported.
+- Security: class names arriving from imported data (folder names, COCO
+  categories, `classes.txt`) are sanitized before being used as export path
+  components, so a hostile name like `../../x` can no longer write outside the
+  export directory.
+- Robustness: a decompression-bomb image (header claiming absurd dimensions)
+  now records a per-file ingest failure instead of aborting the whole
+  import/sync batch.
+- Performance: sync/import now read only asset *ids* when checking which assets
+  already exist (`SELECT id`), instead of materializing every asset record.
 - Model-in-the-loop foundation: a shared predictions loader
   (`visionpack/predictions.py`) reads model output in three formats — vp-native
   JSON, COCO results/instances JSON, and YOLO txt directories (what Ultralytics

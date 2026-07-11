@@ -7,6 +7,7 @@ from importlib.metadata import version as _package_version
 
 from visionpack.cli.commands import (
     annotate,
+    audit,
     autolabel,
     diff,
     export,
@@ -45,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_.register(subparsers)
     sync.register(subparsers)
     validate.register(subparsers)
+    audit.register(subparsers)
     fsck.register(subparsers)
     stats.register(subparsers)
     split.register(subparsers)

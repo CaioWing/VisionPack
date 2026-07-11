@@ -87,7 +87,8 @@ vp init --name factory-defects --task detection
 vp import ./raw --format yolo
 
 # 3. check it for real problems
-vp validate
+vp validate            # invalid labels, duplicates, leakage
+vp audit               # suspicious labels: double boxes, tiny boxes, imbalance
 
 # 4. a deterministic, reproducible split
 vp split create --train 0.8 --val 0.1 --test 0.1 --strategy stratified
@@ -101,6 +102,20 @@ vp stats --by split
 
 # 7. a ready-to-train layout
 vp export --format yolo --split
+```
+
+Prefer Python? The same workflow is one class away
+([Python SDK docs](https://caiowing.github.io/VisionPack/sdk/)):
+
+```python
+from visionpack.sdk import VisionPackClient
+
+ds = VisionPackClient.open(".")
+ds.validate()
+ds.create_split(train=0.8, val=0.1, test=0.1, strategy="stratified")
+ds.snapshot("baseline")
+ds.export("./exports/yolo", format="yolo", split="default")
+metrics = ds.evaluate("runs/predict/labels", format="yolo")
 ```
 
 ---
@@ -185,6 +200,13 @@ See the [Cloud Sync guide](https://caiowing.github.io/VisionPack/cloud-sync/).
 - **Content-addressed snapshots & diff** — reproducible versions; compare any two.
 - **Strong validation** — unreadable images, missing/orphan labels, unknown
   classes, invalid/out-of-bounds boxes, exact + near duplicates, split leakage.
+- **Label-health audit (`vp audit`)** — the labels that are valid but usually
+  wrong: the same object boxed twice, tiny/degenerate boxes, boxes pinned to
+  image borders or covering the whole image, extreme aspect ratios, rare
+  classes and class imbalance. Advisory by default, `--fail-on-findings` for CI.
+- **Python SDK (`visionpack.sdk`)** — the whole workflow programmatically:
+  `VisionPackClient` wraps import/sync/validate/audit/split/snapshot/export and
+  the model loop with the same locking and result shapes as the CLI.
 - **Comparable metrics** — per-split stats so class balance stays auditable as data
   grows.
 - **Benchmarking (`vp eval`)** — score model predictions (vp/COCO JSON or YOLO

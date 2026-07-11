@@ -53,6 +53,7 @@ Rules a consumer can rely on:
 | `vp sync --dry-run --json` | `plans[]` (per source: `images_found`, `labels_found`, `matched`, `class_names[]`) |
 | `vp import ... --json` | `assets`, `annotations`, `objects`, `classes_added`, `recorded_source`, `failures[]` |
 | `vp validate --json` | `ok`, `errors`, `warnings`, `issues[]` (severity, code, message, asset_id, path) |
+| `vp audit --json` | `ok`, `findings`, `by_code` (code → count), `class_counts`, `items[]` (code, message, asset_id, path, class_id) |
 | `vp stats --json` | `stats` (counts, `class_distribution`, `resolutions`), `splits` (per-split breakdowns) |
 | `vp split create/lock/list/show --json` | `id`, `strategy`, `locked`, `sets` (name → count); `show` adds `asset_ids` |
 | `vp snapshot create/list/show --json` | snapshot records (`version`, `message`, `created_at`, `stats`) |

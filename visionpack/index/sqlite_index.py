@@ -265,6 +265,21 @@ class SqliteIndex:
                 self._splits[split_id] = split
         return list(self._splits.values())
 
+    def asset_ids(self) -> set[str]:
+        """The ids of every indexed asset, without materializing the records.
+
+        Sync/import only need "is this asset already known?", so a bare id
+        query keeps that check cheap on large stores — no per-row JSON parse,
+        no ``Asset`` construction. Unsaved writes are overlaid; an
+        already-materialized cache is reused instead of re-querying.
+        """
+        if self._assets is not None:
+            return set(self._assets)
+        with closing(self._connect()) as conn:
+            ids = {row[0] for row in conn.execute("SELECT id FROM assets")}
+        ids.update(self._dirty_assets)
+        return ids
+
     def annotation_for_asset(self, asset_id: str) -> Annotation | None:
         if self._annotation_by_asset is None:
             self._annotation_by_asset = {item.asset_id: item for item in self.annotations()}

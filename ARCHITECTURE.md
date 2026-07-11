@@ -9,7 +9,9 @@ original product vision see [docs/DESIGN.md](docs/DESIGN.md).
 ## Design principles
 
 1. **CLI-first.** The primary interface is the `vp` command, scriptable in
-   notebooks, training servers, and CI. No web app in the core.
+   notebooks, training servers, and CI. No web app in the core. For Python
+   callers the same workflow is exposed as a facade (`visionpack.sdk`) with the
+   CLI's locking and result shapes.
 2. **The manifest is the source of truth.** `visionpack.yaml` declares the dataset
    (classes, sources, splits, validation policy, pack profiles). Behaviour is
    driven by the manifest + the internal index, never by "a folder with the right
@@ -32,8 +34,10 @@ visionpack/
   cli/
     main.py              # argparse wiring; registers every subcommand
     commands/            # one module per command (init, import, sync, validate,
-                         #   fsck, stats, split, snapshot, diff, export, pack,
-                         #   annotate, eval, autolabel, queue)
+                         #   audit, fsck, stats, split, snapshot, diff, export,
+                         #   pack, annotate, eval, autolabel, queue)
+  sdk/                   # VisionPackClient: the Python facade over the whole
+                         #   workflow (same locking + result shapes as the CLI)
   core/
     project.py           # Project: manifest + index + object store handle
     manifest.py          # Manifest dataclass + pydantic schema (sources, classes…)
@@ -63,6 +67,8 @@ visionpack/
   eval.py                # vp eval: AP/mAP, accuracy, confusion matrix vs a split set
   autolabel.py           # vp autolabel: persist confident predictions as annotations
   curation.py            # vp queue: active-learning ranking + label-quality audit
+  audit.py               # vp audit: label-health findings (duplicate/tiny/edge boxes,
+                         #   aspect outliers, class imbalance)
 ```
 
 ---
@@ -264,8 +270,9 @@ The roadmap is sequenced so each phase unblocks the next.
 ### Phase B — Differentiators
 - [x] near-duplicate & cross-split leakage detection (perceptual-hash tier)
 - [ ] optional embedding tier (CLIP/DINOv2) for semantic near-duplicates
-- [ ] label-health audit (`vp audit`): duplicate/degenerate/edge-pinned boxes,
-      aspect-ratio outliers, class imbalance
+- [x] label-health audit (`vp audit`): duplicate/degenerate/edge-pinned boxes,
+      aspect-ratio outliers, class imbalance (advisory by default;
+      `--fail-on-findings` for CI)
 - [x] model-in-the-loop quality (`vp queue --include-labeled`: confident
       detections with no matching label, and labels the model never finds)
 - [ ] distribution-drift diff between snapshots (per-class deltas / KL)

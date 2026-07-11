@@ -166,6 +166,40 @@ vp validate --report reports/validation.json
 
 The current validator checks image readability, missing annotations, orphan labels, unknown classes, invalid boxes, boxes outside image bounds, duplicate exact assets, and split leakage.
 
+## Audit Label Health (vp audit)
+
+`vp validate` catches labels that are *invalid*; `vp audit` finds labels that
+are valid but *suspicious* — the ones that usually turn out to be annotation
+mistakes:
+
+```bash
+vp audit
+```
+
+It reports duplicate boxes (the same object labeled twice), degenerate (tiny)
+boxes, boxes pinned to two or more image borders, whole-image boxes, extreme
+aspect-ratio outliers, rare classes, and dataset-level class imbalance.
+
+Findings are advisory (exit code 0). Gate CI on them explicitly:
+
+```bash
+vp audit --fail-on-findings
+```
+
+Thresholds can be tuned per run (`--min-box-px`, `--duplicate-iou`,
+`--max-aspect-ratio`, `--imbalance-ratio`, `--min-class-count`) or persisted in
+`visionpack.yaml`:
+
+```yaml
+validation:
+  audit:
+    min_box_px: 12
+    duplicate_iou: 0.85
+```
+
+Like every pipeline command, `vp audit --json` prints a machine-readable
+envelope with per-code counts and the full findings list.
+
 ## Show Statistics
 
 Print a summary:
@@ -323,17 +357,21 @@ The archive includes:
 
 ## Python API
 
-The public API is intentionally small while the project is early:
+The supported programmatic surface is the SDK — the whole CLI workflow behind
+one Python class, with the same locking and result shapes (see the
+[Python SDK]({% link sdk.md %}) page):
 
 ```python
-from visionpack import Dataset
+from visionpack.sdk import VisionPackClient
 
-ds = Dataset.open(".")
-print(ds.manifest.name)
-print(len(ds.index.assets()))
+ds = VisionPackClient.open(".")
+print(ds.name, len(ds))
+ds.validate()
+ds.export("./exports/yolo", format="yolo", split="default")
 ```
 
-More stable SDK methods will be added as the internal workflows settle.
+The lower-level `visionpack.Dataset` / `Project` handle stays available as
+`ds.project` for anything the facade doesn't cover yet.
 
 ## Current Limitations
 

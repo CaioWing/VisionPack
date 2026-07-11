@@ -79,6 +79,9 @@ class JsonIndex:
     def splits(self) -> list[Split]:
         return [Split.from_dict(item) for item in self._data.get("splits", {}).values()]
 
+    def asset_ids(self) -> set[str]:
+        return set(self._data.get("assets", {}))
+
     def annotation_for_asset(self, asset_id: str) -> Annotation | None:
         if self._annotation_by_asset is None:
             self._annotation_by_asset = {item.asset_id: item for item in self.annotations()}
