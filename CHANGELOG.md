@@ -4,6 +4,20 @@ All notable changes to VisionPack are tracked here.
 
 ## [Unreleased]
 
+- Distribution drift between snapshots (`vp diff v1 v2 --drift`, SDK
+  `ds.drift("v1", "v2")`): per-class object counts and distribution-share
+  deltas (biggest movers first) plus smoothed KL and Jensen–Shannon divergence,
+  computed from the stats frozen in each snapshot — reproducible forever.
+- Dataset → model lineage (`vp snapshot tag v4 trained:run-812`): free-form
+  tags on snapshots (add/`--remove`, shown in `snapshot list`/`show`); SDK
+  `tag_snapshot`/`untag_snapshot`/`snapshots_by_tag` (a bare `key:` prefix
+  matches any value).
+- `vp import --format auto` (now the default): the import format is detected
+  from the dataset's structure — instances-style JSON means COCO (a directory
+  with the JSON next to the images works too), `.txt` labels or
+  classes/data.yaml furniture means YOLO, folder-per-class means ImageFolder;
+  ambiguous layouts ask for an explicit `--format` instead of guessing. The
+  SDK's `import_dir` defaults to `auto` as well.
 - Python SDK (`visionpack.sdk`): the whole dataset lifecycle behind one class,
   `VisionPackClient` — init/open, import, sync, validate, audit, stats, splits,
   snapshots (including read-only `checkout(version)` views), export, and the

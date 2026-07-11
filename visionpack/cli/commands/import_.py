@@ -18,7 +18,12 @@ from visionpack.progress import cli_progress
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("import", help="Import a dataset")
     parser.add_argument("source", help="Input dataset path (YOLO/ImageFolder root, or COCO annotation JSON)")
-    parser.add_argument("--format", required=True, choices=["yolo", "coco", "imagefolder"], help="Input format")
+    parser.add_argument(
+        "--format",
+        default="auto",
+        choices=["auto", "yolo", "coco", "imagefolder"],
+        help="Input format (default: auto — detected from the dataset's structure)",
+    )
     parser.add_argument("--images", help="Image directory (required for --format coco)")
     parser.add_argument(
         "--task",
@@ -48,6 +53,8 @@ def _run_locked(project: Project, args: argparse.Namespace) -> int:
     if args.task and project.manifest.task != args.task:
         project.manifest.task = args.task
         project.save_manifest()
+
+    _resolve_format(args)
 
     if args.format == "coco":
         if not args.images:
@@ -100,6 +107,30 @@ def _run_locked(project: Project, args: argparse.Namespace) -> int:
         _report_failures(summary.failures)
         return 1
     return 0
+
+
+def _resolve_format(args: argparse.Namespace) -> None:
+    """Turn ``--format auto`` into a concrete format (mutating ``args`` so the
+    recorded source and the JSON output carry what was actually imported).
+
+    When COCO is detected from a *directory*, the annotations JSON found inside
+    becomes the source and the directory doubles as ``--images`` unless one was
+    given — so ``vp import ./dataset`` works on the common "instances.json next
+    to the images" layout.
+    """
+    if args.format != "auto":
+        return
+    from visionpack.formats.detect import coco_json_in, detect_import_format
+
+    source = Path(args.source)
+    detected = detect_import_format(source)
+    if detected == "coco" and source.is_dir():
+        annotations = coco_json_in(source)
+        assert annotations is not None  # detection said coco, so the JSON is there
+        args.source = str(annotations)
+        if not args.images:
+            args.images = str(source)
+    args.format = detected
 
 
 def _report_failures(failures: list) -> None:

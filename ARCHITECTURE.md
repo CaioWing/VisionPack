@@ -265,7 +265,8 @@ The roadmap is sequenced so each phase unblocks the next.
 - [x] semantic segmentation (per-class mask PNGs via `vp export --format masks`)
 - [x] YOLO-seg import-export (polygon label lines; `--seg` / segmentation-task default)
 - [ ] YOLO-pose import-export; dedicated keypoint importer
-- [ ] `--format auto` task/format detection on import (predictions already auto-detect)
+- [x] `--format auto` format detection on import (now the default; structural
+      detection of YOLO/COCO/ImageFolder, explicit `--format` when ambiguous)
 
 ### Phase B — Differentiators
 - [x] near-duplicate & cross-split leakage detection (perceptual-hash tier)
@@ -275,8 +276,10 @@ The roadmap is sequenced so each phase unblocks the next.
       `--fail-on-findings` for CI)
 - [x] model-in-the-loop quality (`vp queue --include-labeled`: confident
       detections with no matching label, and labels the model never finds)
-- [ ] distribution-drift diff between snapshots (per-class deltas / KL)
-- [ ] dataset → model lineage (`vp snapshot tag v4 trained:<run-id>`)
+- [x] distribution-drift diff between snapshots (`vp diff --drift`: per-class
+      share deltas, smoothed KL + Jensen–Shannon divergence)
+- [x] dataset → model lineage (`vp snapshot tag v4 trained:<run-id>`, free-form
+      tags; `snapshots_by_tag` lookup in the SDK)
 
 ### Benchmarking
 - [x] `vp eval` — score predictions against a split set (per-class AP@50,

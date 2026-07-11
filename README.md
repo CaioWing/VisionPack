@@ -83,8 +83,8 @@ uv run vp --help
 # 1. create a project (the manifest is visionpack.yaml)
 vp init --name factory-defects --task detection
 
-# 2. bring in a YOLO dataset
-vp import ./raw --format yolo
+# 2. bring in a dataset (YOLO/COCO/ImageFolder auto-detected)
+vp import ./raw
 
 # 3. check it for real problems
 vp validate            # invalid labels, duplicates, leakage
@@ -197,7 +197,11 @@ See the [Cloud Sync guide](https://caiowing.github.io/VisionPack/cloud-sync/).
   single-pass verified relay across providers (S3→GCS, local→S3, …); one
   fast-list instead of per-object lookups, retries with backoff on every remote
   call, tunable concurrency (`--jobs`); streaming export.
-- **Content-addressed snapshots & diff** — reproducible versions; compare any two.
+- **Content-addressed snapshots & diff** — reproducible versions; compare any
+  two, including class-distribution drift (`vp diff v1 v2 --drift`: per-class
+  share deltas, KL/JS divergence).
+- **Dataset → model lineage** — `vp snapshot tag v4 trained:<run-id>` links a
+  training run to the exact dataset version it consumed.
 - **Strong validation** — unreadable images, missing/orphan labels, unknown
   classes, invalid/out-of-bounds boxes, exact + near duplicates, split leakage.
 - **Label-health audit (`vp audit`)** — the labels that are valid but usually

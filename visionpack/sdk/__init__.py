@@ -49,9 +49,19 @@ from visionpack.core.lock import project_lock
 from visionpack.core.models import Annotation, Asset, ClassDef, Split
 from visionpack.core.project import Project
 from visionpack.curation import rank_for_annotation
+from visionpack.diff import diff_snapshots
+from visionpack.drift import drift_between
 from visionpack.eval import evaluate as _evaluate
 from visionpack.predictions import PredictionSet, load_predictions
-from visionpack.snapshot import create_snapshot, list_snapshots, load_snapshot, open_snapshot
+from visionpack.snapshot import (
+    create_snapshot,
+    find_snapshots_by_tag,
+    list_snapshots,
+    load_snapshot,
+    open_snapshot,
+    tag_snapshot,
+    untag_snapshot,
+)
 from visionpack.split import create_split as _create_split
 from visionpack.split import get_split, lock_split
 from visionpack.stats import collect_stats, split_breakdown
@@ -142,7 +152,7 @@ class VisionPackClient:
         self,
         source: str | Path,
         *,
-        format: str = "yolo",
+        format: str = "auto",
         images: str | Path | None = None,
         copy_mode: str = "ingest",
     ) -> dict[str, Any]:
@@ -150,10 +160,24 @@ class VisionPackClient:
 
         ``source`` is the YOLO/ImageFolder root — or, for ``format="coco"``,
         the annotations JSON, with ``images`` pointing at the image directory.
-        Returns the import summary as a dict (including per-file ``failures``).
+        The default ``format="auto"`` detects the layout from the dataset's
+        structure. Returns the import summary as a dict (including per-file
+        ``failures``).
         """
+        if format == "auto":
+            from visionpack.formats.detect import coco_json_in, detect_import_format
+
+            source_path = Path(source)
+            format = detect_import_format(source_path)
+            if format == "coco" and source_path.is_dir():
+                # "instances.json next to the images" layout: the JSON becomes
+                # the source and the directory doubles as the images root.
+                annotations = coco_json_in(source_path)
+                assert annotations is not None  # detection said coco, so the JSON is there
+                source = annotations
+                images = images or source_path
         if format not in IMPORT_FORMATS:
-            raise VisionPackError(f"Unknown import format {format!r}. Use one of: {', '.join(IMPORT_FORMATS)}.")
+            raise VisionPackError(f"Unknown import format {format!r}. Use one of: auto, {', '.join(IMPORT_FORMATS)}.")
         from visionpack.formats.classification import ImageFolderImporter
         from visionpack.formats.coco import CocoImporter
         from visionpack.formats.yolo import YoloImporter
@@ -251,6 +275,28 @@ class VisionPackClient:
 
     def get_snapshot(self, version: str) -> dict[str, Any]:
         return load_snapshot(self._project, version)
+
+    def tag_snapshot(self, version: str, tag: str) -> dict[str, Any]:
+        """Attach a lineage tag (convention ``key:value``, e.g. ``trained:run-812``)."""
+        with self._write_lock():
+            return tag_snapshot(self._project, version, tag)
+
+    def untag_snapshot(self, version: str, tag: str) -> dict[str, Any]:
+        with self._write_lock():
+            return untag_snapshot(self._project, version, tag)
+
+    def snapshots_by_tag(self, tag: str) -> list[dict[str, Any]]:
+        """Snapshots carrying ``tag`` (a bare ``key:`` prefix matches any value)."""
+        return find_snapshots_by_tag(self._project, tag)
+
+    def diff(self, left: str, right: str) -> dict[str, Any]:
+        """Structural diff between two snapshots (mirrors ``vp diff``)."""
+        return diff_snapshots(self._project, left, right)
+
+    def drift(self, left: str, right: str) -> dict[str, Any]:
+        """Class-distribution drift between two snapshots (``vp diff --drift``):
+        per-class share deltas plus KL/JS divergence."""
+        return drift_between(self._project, left, right)
 
     def checkout(self, version: str) -> VisionPackClient:
         """A read-only client pinned to snapshot ``version``.

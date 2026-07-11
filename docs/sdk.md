@@ -43,7 +43,7 @@ for item in ds.annotation_queue("preds.json")[:20]:           # what to label ne
 | Ingest | `import_dir(source, format="yolo"\|"coco"\|"imagefolder", images=..., copy_mode=...)`, `sync(source=..., jobs=...)`, `plan_sync()` |
 | Quality | `validate(strict=...)`, `audit(**thresholds)`, `stats()`, `split_stats()` |
 | Splits | `create_split(...)`, `lock_split()`, `split()` |
-| Versions | `snapshot(message)`, `snapshots()`, `get_snapshot(version)`, `checkout(version)` |
+| Versions | `snapshot(message)`, `snapshots()`, `get_snapshot(version)`, `checkout(version)`, `diff(v1, v2)`, `drift(v1, v2)`, `tag_snapshot(v, tag)`, `untag_snapshot(v, tag)`, `snapshots_by_tag(tag)` |
 | Outputs | `export(output, format="yolo"\|"coco"\|"imagefolder"\|"masks", split=..., seg=...)` |
 | Model loop | `load_predictions(...)`, `evaluate(...)`, `autolabel(...)`, `annotation_queue(...)` |
 | Data access | `assets()`, `annotations()`, `samples()` (streaming iterator), `len(ds)`, `for asset, ann in ds:` |
@@ -60,6 +60,17 @@ for item in ds.annotation_queue("preds.json")[:20]:           # what to label ne
 - **Read-only snapshot views.** `ds.checkout("v2")` returns a client pinned to
   that snapshot: exports, stats, and evaluation reflect the frozen state, and
   mutating methods raise instead of silently writing into live history.
+
+## Versions, drift, and lineage
+
+```python
+ds.snapshot("after week-30 batch")            # v5
+print(ds.drift("v4", "v5")["js_divergence"])  # did the class mix shift?
+
+# after training, link the run to the exact dataset version it consumed:
+ds.tag_snapshot("v5", "trained:run-812")
+ds.snapshots_by_tag("trained:")               # every version a model trained on
+```
 
 ## Streaming a dataset
 
