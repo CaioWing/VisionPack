@@ -9,7 +9,7 @@ leak-free, ready-to-train dataset.
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
-![Tests](https://img.shields.io/badge/tests-118%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-143%20passing-brightgreen)
 
 [Documentation](https://caiowing.github.io/VisionPack/) ·
 [Install](https://caiowing.github.io/VisionPack/installation/) ·
@@ -199,6 +199,10 @@ See the [Cloud Sync guide](https://caiowing.github.io/VisionPack/cloud-sync/).
   (WebDataset shards); exports hardlink from the CAS or stream from the cloud.
 - **Interoperable I/O** — YOLO (incl. YOLO-seg), COCO, ImageFolder in and out;
   semantic masks out.
+- **Machine-readable everything** — every pipeline command takes `--json` and
+  prints a stable, schema-versioned envelope on stdout, so services, UIs, and CI
+  can drive VisionPack without scraping text. See the
+  [JSON Output guide](https://caiowing.github.io/VisionPack/json-output/).
 
 Full command reference and per-command options live in the
 [CLI guide](https://caiowing.github.io/VisionPack/usage/).
@@ -250,7 +254,7 @@ multi-source ingestion (local and cloud) → validation → deterministic splits
 snapshots → ready-to-train export/packing → evaluation (`vp eval`) and
 model-in-the-loop labeling (`vp autolabel` / `vp queue`) — works end-to-end
 across classification, detection, instance/semantic segmentation, and keypoints,
-with 118 passing tests. APIs may still shift; feedback and contributions are
+with 143 passing tests. APIs may still shift; feedback and contributions are
 welcome.
 
 ```bash

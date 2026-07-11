@@ -43,8 +43,9 @@ pip install "visionpack[gcs]"     # Google Cloud Storage (gcsfs)
 pip install "visionpack[azure]"   # Azure Blob  (adlfs)
 ```
 
-You can combine them: `pip install "visionpack[s3,gcs]"`. See {% link cloud-sync.md %}
-for declaring remote sources and a cloud target.
+You can combine them: `pip install "visionpack[s3,gcs]"`. See
+[Cloud Sync]({% link cloud-sync.md %}) for declaring remote sources and a cloud
+target.
 
 ## Develop from source
 

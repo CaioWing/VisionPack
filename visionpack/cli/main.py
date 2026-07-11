@@ -64,11 +64,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args) or 0)
-    except VisionPackError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    except FileNotFoundError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+    except (VisionPackError, FileNotFoundError) as exc:
+        # In JSON mode the failure is part of the contract: a structured error
+        # envelope on stdout (plus the non-zero exit), not prose on stderr.
+        if getattr(args, "json", False):
+            from visionpack.cli.output import emit_json_error
+
+            emit_json_error(args.command, exc)
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return 2
 
 

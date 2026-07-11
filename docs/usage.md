@@ -35,6 +35,11 @@ uv run python -m visionpack --help   # or run the module directly
 The examples below use the bare `vp` command; prefix with `uv run` when working
 from a source checkout.
 
+{: .tip }
+Every pipeline command also takes `--json` and prints one machine-readable,
+schema-versioned document to stdout — the supported way to drive VisionPack
+from another program. See [JSON Output]({% link json-output.md %}).
+
 ## Initialize A Dataset
 
 Create a VisionPack project in the current directory:

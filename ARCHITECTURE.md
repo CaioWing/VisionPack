@@ -282,8 +282,10 @@ The roadmap is sequenced so each phase unblocks the next.
 - [ ] Hugging Face Datasets export
 
 ### Phase C — Reporting & polish
+- [x] machine-readable output: every pipeline command takes `--json` and prints
+      a schema-versioned envelope (`cli/output.py`) — the stable contract for
+      driving VisionPack from services/UIs/CI; errors are structured too
 - [ ] HTML validation / stats / drift reports
-- [ ] JSON report output for stats and diff
 - [ ] richer terminal output with `rich`
 - [ ] move CLI plumbing from `argparse` to `typer` once commands stabilize
 

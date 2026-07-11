@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
+from visionpack.cli.output import emit_json
 from visionpack.core.project import Project
 from visionpack.curation import rank_for_annotation
 from visionpack.predictions import FORMATS, load_predictions
@@ -34,7 +34,8 @@ def run(args: argparse.Namespace) -> int:
 
     ranked = rank_for_annotation(project, predictions, include_labeled=args.include_labeled)
     if args.json:
-        print(json.dumps(ranked[: args.limit] if args.limit else ranked, indent=2))
+        shown = ranked[: args.limit] if args.limit else ranked
+        emit_json("queue", {"total": len(ranked), "items": shown})
         return 0
 
     if not ranked:

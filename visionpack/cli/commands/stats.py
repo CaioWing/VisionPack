@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 
+from visionpack.cli.output import emit_json
 from visionpack.core.project import Project
 from visionpack.stats import collect_stats, split_breakdown
 
@@ -10,7 +10,7 @@ from visionpack.stats import collect_stats, split_breakdown
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("stats", help="Show dataset statistics")
     parser.add_argument("--by", choices=["class", "split"], help="Focus output on one dimension")
-    parser.add_argument("--json", action="store_true", help="Print JSON")
+    parser.add_argument("--json", action="store_true", help="Print a machine-readable JSON result")
     parser.add_argument("--html", help="Reserved for HTML reports")
     parser.set_defaults(func=run)
 
@@ -19,7 +19,12 @@ def run(args: argparse.Namespace) -> int:
     project = Project.open(".")
     stats = collect_stats(project)
     if args.json:
-        print(json.dumps(stats, indent=2, sort_keys=True))
+        breakdowns = {}
+        for split in project.index.splits():
+            breakdown = split_breakdown(project, split.id)
+            if breakdown is not None:
+                breakdowns[split.id] = breakdown
+        emit_json("stats", {"stats": stats, "splits": breakdowns})
         return 0
     if args.by == "class":
         for class_id, count in stats["class_distribution"].items():

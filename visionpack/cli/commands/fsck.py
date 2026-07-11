@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 
+from visionpack.cli.output import emit_json
 from visionpack.core.project import Project
 from visionpack.fsck import run_fsck
 
@@ -18,6 +20,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         action="store_true",
         help="Skip the scan for unreferenced objects in the store",
     )
+    parser.add_argument("--json", action="store_true", help="Print a machine-readable JSON result")
     parser.set_defaults(func=run)
 
 
@@ -25,6 +28,20 @@ def run(args: argparse.Namespace) -> int:
     project = Project.open(".")
     report = run_fsck(project, deep=args.deep, check_orphans=not args.no_orphans)
     mode = "deep" if args.deep else "quick"
+    if args.json:
+        emit_json(
+            "fsck",
+            {
+                "ok": report.ok,
+                "mode": mode,
+                "checked_assets": report.checked_assets,
+                "checked_objects": report.checked_objects,
+                "errors": len(report.errors),
+                "warnings": len(report.warnings),
+                "issues": [asdict(issue) for issue in report.issues],
+            },
+        )
+        return 0 if report.ok else 1
     print(
         f"fsck ({mode}): checked {report.checked_assets} assets, {report.checked_objects} objects "
         f"-> {len(report.errors)} errors, {len(report.warnings)} warnings"

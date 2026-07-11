@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 
+from visionpack.cli.output import emit_json
 from visionpack.core.project import Project
 from visionpack.diff import diff_snapshots
 
@@ -11,7 +11,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     parser = subparsers.add_parser("diff", help="Diff two snapshots")
     parser.add_argument("left")
     parser.add_argument("right")
-    parser.add_argument("--json", action="store_true", help="Print JSON")
+    parser.add_argument("--json", action="store_true", help="Print a machine-readable JSON result")
     parser.set_defaults(func=run)
 
 
@@ -19,7 +19,7 @@ def run(args: argparse.Namespace) -> int:
     project = Project.open(".")
     result = diff_snapshots(project, args.left, args.right)
     if args.json:
-        print(json.dumps(result, indent=2, sort_keys=True))
+        emit_json("diff", {"left": args.left, "right": args.right, **result})
         return 0
     print(f"Diff {args.left} -> {args.right}")
     for key in (
