@@ -33,10 +33,22 @@ pip install "visionpack[azure]"   # Azure Blob
   cause a mismatch.
 - **Re-sync is metadata-only.** Re-running lists object metadata, sees the etags
   match, and does nothing — no downloads, no copies.
+- **One listing beats many lookups.** Source metadata comes from paginated
+  LISTs (never a per-object HEAD), and the target CAS is checked with **one
+  prefix listing per run** instead of a per-object existence check — at 100k
+  objects that's ~100 LISTs, not 100k HEADs.
+- **Transient errors are retried.** Every remote call gets exponential-backoff
+  retries (throttling, dropped connections, 5xx). If an object still fails, it
+  is recorded as a per-object failure and the rest of the sync proceeds — the
+  command exits non-zero so CI can gate on it.
 
 {: .note }
-v1 is **same-provider** (S3↔S3 or GCS↔GCS). Cross-cloud transfer (S3↔GCS) is on
-the roadmap.
+Transfers are **server-side within one provider** (S3↔S3, GCS↔GCS) — the bytes
+never touch your machine. **Cross-provider** targets (S3→GCS, local→S3, S3→local
+…) also work: sync *relays* the bytes it already read to compute the `sha256`,
+so a cross-provider copy still costs exactly **one read + one upload**, never a
+second download. Relayed uploads are verified against the landed object's
+metadata before the index points at them.
 
 ## Declare remote sources
 
@@ -75,7 +87,16 @@ Then reconcile. Re-running is idempotent — unchanged objects are skipped entir
 ```bash
 vp sync
 vp sync --source camera-A   # just one source
+vp sync --jobs 32           # concurrent transfers per source
 ```
+
+Remote sources default to **16+ concurrent transfers** (object-store throughput
+is latency-bound, so the CPU-derived default would undersize it); tune with
+`--jobs`.
+
+All three source formats work remotely: **YOLO** (images + label dir),
+**COCO** (`labels:` points at the instances JSON), and **ImageFolder**
+(`root:` is the directory of class subfolders).
 
 ## A content-addressed target
 
@@ -111,7 +132,7 @@ Pick how each source materializes its bytes with `copy:`.
 
 | Mode | What it does | Use when |
 |------|--------------|----------|
-| `copy` | Server-side copy into the `target:` content-addressed store. Target is self-sufficient; global dedup. | The common cloud case. |
+| `copy` | Copy into the `target:` content-addressed store — server-side when source and target share a provider, single-pass relay when they don't. Target is self-sufficient; global dedup. | The common cloud case. |
 | `reference` | No copy — the index points straight at the source object. | You control the source bucket and want zero extra storage. |
 | `ingest` | Download into the **local** CAS (`.vp/objects/`). | Offline / edge work on a remote dataset. |
 

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import os
+from dataclasses import asdict
 from pathlib import Path
 
+from visionpack.cli.output import emit_json
 from visionpack.core.errors import VisionPackError
 from visionpack.core.lock import project_lock
 from visionpack.core.project import Project
@@ -32,6 +34,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Do not add this import as a source in visionpack.yaml (use for one-off/throwaway imports)",
     )
     parser.add_argument("--class-map", help="Reserved for explicit class mapping files")
+    parser.add_argument("--json", action="store_true", help="Print a machine-readable JSON result")
     parser.set_defaults(func=run)
 
 
@@ -57,6 +60,24 @@ def _run_locked(project: Project, args: argparse.Namespace) -> int:
     else:
         importer = YoloImporter(project, Path(args.source), copy_mode=args.copy)
         label = "YOLO"
+
+    if args.json:
+        summary = importer.run()
+        recorded = None if args.no_record else _record_source(project, args)
+        emit_json(
+            "import",
+            {
+                "format": args.format,
+                "assets": summary.assets,
+                "annotations": summary.annotations,
+                "objects": summary.objects,
+                "classes_added": summary.classes_added,
+                "orphan_labels": summary.orphan_labels,
+                "recorded_source": recorded,
+                "failures": [asdict(failure) for failure in summary.failures],
+            },
+        )
+        return 1 if summary.failures else 0
 
     with cli_progress(f"Importing {label}") as callback:
         summary = importer.run(progress=callback)

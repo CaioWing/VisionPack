@@ -9,6 +9,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
 from visionpack.core.errors import VisionPackError
+from visionpack.sources.retry import with_retries
 
 
 @dataclass(slots=True)
@@ -72,13 +73,24 @@ class Resolver(ABC):
     def read_bytes(self, uri: str) -> bytes: ...
 
     @abstractmethod
+    def write_bytes(self, uri: str, data: bytes) -> None:
+        """Write ``data`` to ``uri``, creating parents as the backend requires.
+
+        The upload half of a cross-provider relay: when a server-side copy is
+        impossible (source and target live on different providers), sync uploads
+        the bytes it already read for hashing — one read, one write, no second
+        round-trip.
+        """
+
+    @abstractmethod
     def server_copy(self, src_uri: str, dst_uri: str) -> None:
         """Copy ``src_uri`` to ``dst_uri`` without routing the bytes through us.
 
-        Same-provider only (v1): the copy happens inside the backend (S3
+        Same-provider only: the copy happens inside the backend (S3
         ``CopyObject`` / GCS rewrite / a local filesystem copy), so the client
         never downloads-then-uploads. Used by ``sync`` to land objects in a
-        content-addressed target bucket (see docs/SPEC-cloud-sync.md).
+        content-addressed target bucket; cross-provider transfers go through
+        :meth:`write_bytes` instead (the relay path).
         """
 
     @abstractmethod
@@ -133,6 +145,11 @@ class LocalResolver(Resolver):
     def read_bytes(self, uri: str) -> bytes:
         return self._path(uri).read_bytes()
 
+    def write_bytes(self, uri: str, data: bytes) -> None:
+        destination = self._path(uri)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+
     def server_copy(self, src_uri: str, dst_uri: str) -> None:
         dst = self._path(dst_uri)
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +172,11 @@ class FsspecResolver(Resolver):
     The provider library (``s3fs``/``gcsfs``/``adlfs``) is an optional extra; it
     is imported lazily by :func:`get_resolver`, never by the core. Filesystem
     instances are cached by fsspec itself, so resolving per call is cheap.
+
+    Every network call goes through :func:`with_retries`: transient provider
+    errors (throttling, dropped connections, 5xx) are retried with exponential
+    backoff, and exhaustion surfaces as a :class:`VisionPackError` so ingest
+    records a per-object failure instead of aborting the sync.
     """
 
     def __init__(self, scheme: str, storage_options: dict[str, Any] | None = None) -> None:
@@ -185,17 +207,18 @@ class FsspecResolver(Resolver):
 
     def exists(self, uri: str) -> bool:
         fs, path = self._fs_and_path(uri)
-        return bool(fs.exists(path))
+        return bool(with_retries(f"exists({uri})", lambda: fs.exists(path)))
 
     def list_files(self, uri: str, suffixes: set[str] | None = None) -> list[FileRef]:
         fs, root = self._fs_and_path(uri)
-        if not fs.exists(root):
+        if not with_retries(f"exists({uri})", lambda: fs.exists(root)):
             raise VisionPackError(f"Source location does not exist: {uri}")
         base = root.rstrip("/")
         refs: list[FileRef] = []
         # detail=True returns size + etag in the same paginated LIST, so a sync
         # needs no per-object HEAD (the metadata-only listing the spec promises).
-        for path, info in sorted(fs.find(root, detail=True).items()):
+        listing = with_retries(f"list({uri})", lambda: fs.find(root, detail=True))
+        for path, info in sorted(listing.items()):
             name = path.rsplit("/", 1)[-1]
             suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
             if suffixes is not None and suffix not in suffixes:
@@ -211,24 +234,28 @@ class FsspecResolver(Resolver):
 
     def stat(self, uri: str) -> ObjectStat:
         fs, path = self._fs_and_path(uri)
-        return self._stat_from_info(fs.info(path))
+        return self._stat_from_info(with_retries(f"stat({uri})", lambda: fs.info(path)))
 
     def read_bytes(self, uri: str) -> bytes:
         fs, path = self._fs_and_path(uri)
-        return fs.cat_file(path)
+        return with_retries(f"read({uri})", lambda: fs.cat_file(path))
+
+    def write_bytes(self, uri: str, data: bytes) -> None:
+        fs, path = self._fs_and_path(uri)
+        with_retries(f"write({uri})", lambda: fs.pipe_file(path, data))
 
     def server_copy(self, src_uri: str, dst_uri: str) -> None:
         src_fs, src_path = self._fs_and_path(src_uri)
         dst_fs, dst_path = self._fs_and_path(dst_uri)
-        # v1 is same-provider: a cross-provider copy can't be server-side (it
-        # would have to transit the client), so refuse it loudly rather than
-        # silently downloading-then-uploading.
+        # A cross-provider copy can't be server-side (it would have to transit
+        # the client), so refuse it loudly rather than silently
+        # downloading-then-uploading — callers relay via write_bytes instead.
         if type(src_fs) is not type(dst_fs):
             raise VisionPackError(
                 f"Server-side copy needs source and target on the same provider "
-                f"(got {src_uri!r} -> {dst_uri!r}); cross-cloud transfer is not supported in v1."
+                f"(got {src_uri!r} -> {dst_uri!r}); use the relay path (write_bytes) for cross-provider transfer."
             )
-        dst_fs.copy(src_path, dst_path)
+        with_retries(f"copy({src_uri} -> {dst_uri})", lambda: dst_fs.copy(src_path, dst_path))
 
     def local_path(self, uri: str) -> Path | None:
         # Remote objects have no local path; ingest works from in-memory bytes.

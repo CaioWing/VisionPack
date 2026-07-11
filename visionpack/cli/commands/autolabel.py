@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from visionpack.autolabel import apply_predictions
+from visionpack.cli.output import emit_json
 from visionpack.core.project import Project
 from visionpack.predictions import FORMATS, load_predictions
 
@@ -18,6 +19,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         action="store_true",
         help="Also overwrite assets that already have annotations (default: only unlabeled assets are touched)",
     )
+    parser.add_argument("--json", action="store_true", help="Print a machine-readable JSON result")
     parser.set_defaults(func=run)
 
 
@@ -25,6 +27,12 @@ def run(args: argparse.Namespace) -> int:
     project = Project.open(".")
     predictions = load_predictions(project, Path(args.predictions), fmt=args.format)
     summary = apply_predictions(project, predictions, min_confidence=args.min_confidence, replace=args.replace)
+    if args.json:
+        emit_json(
+            "autolabel",
+            {**summary, "min_confidence": args.min_confidence, "unknown_classes": sorted(set(predictions.unknown_classes))},
+        )
+        return 0
     print(f"Autolabeled {summary['labeled']} asset(s) with {summary['objects']} object(s) (source recorded as type=model).")
     if summary["skipped_existing"]:
         print(f"Skipped {summary['skipped_existing']} already-labeled asset(s); pass --replace to overwrite them.")

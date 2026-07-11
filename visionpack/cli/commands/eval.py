@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
+from visionpack.cli.output import emit_json
 from visionpack.core.project import Project
 from visionpack.eval import evaluate
 from visionpack.predictions import FORMATS, load_predictions
@@ -32,7 +32,7 @@ def run(args: argparse.Namespace) -> int:
         conf_threshold=args.conf,
     )
     if args.json:
-        print(json.dumps(result, indent=2, sort_keys=True))
+        emit_json("eval", result)
         return 0
 
     scope = result["scope"]

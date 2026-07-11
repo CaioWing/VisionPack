@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from pathlib import Path
 
+from visionpack.cli.output import emit_json
 from visionpack.core.errors import VisionPackError
 from visionpack.core.project import Project
 from visionpack.packing import pack_archive, pack_training
@@ -19,6 +21,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=None,
         help="For training packs: emit per-set shards from this split (default 'default' when given without a value)",
     )
+    parser.add_argument("--json", action="store_true", help="Print a machine-readable JSON result")
     parser.set_defaults(func=run)
 
 
@@ -33,6 +36,9 @@ def run(args: argparse.Namespace) -> int:
 
     if fmt == "webdataset":
         summary = pack_training(project, output=output, profile_name=args.profile, split_id=args.split)
+        if args.json:
+            emit_json("pack", {"profile": args.profile, "format": fmt, **asdict(summary)})
+            return 0
         sets = ", ".join(f"{name}={count}" for name, count in summary.sets.items())
         print(
             f"Packed WebDataset to {summary.path} "
@@ -44,6 +50,9 @@ def run(args: argparse.Namespace) -> int:
 
     if fmt in {"tar", "tar.zst"}:
         summary = pack_archive(project, output=output, profile_name=args.profile)
+        if args.json:
+            emit_json("pack", {"profile": args.profile, **asdict(summary)})
+            return 0
         print(
             f"Packed archive: {summary.path} "
             f"({summary.format}, {summary.files} files, {summary.assets} assets, {summary.size_bytes} bytes)"

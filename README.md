@@ -9,7 +9,7 @@ leak-free, ready-to-train dataset.
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
-![Tests](https://img.shields.io/badge/tests-118%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-143%20passing-brightgreen)
 
 [Documentation](https://caiowing.github.io/VisionPack/) ·
 [Install](https://caiowing.github.io/VisionPack/installation/) ·
@@ -176,8 +176,12 @@ See the [Cloud Sync guide](https://caiowing.github.io/VisionPack/cloud-sync/).
   extra dependencies, scale-proof via LSH bucketing; surfaced in `vp validate`.
 - **Multi-source sync** — declarative `sources:` + `vp sync`, with per-asset
   provenance; idempotent re-sync that only pulls what's new.
-- **Cloud-native** — sync from and to S3/GCS/Azure without downloading the whole
-  dataset; server-side `copy` into a content-addressed target, streaming export.
+- **Cloud-native, multi-provider** — sync YOLO, COCO, and ImageFolder sources
+  from S3/GCS/Azure without downloading the whole dataset; server-side `copy`
+  into a content-addressed target when source and target share a provider,
+  single-pass verified relay across providers (S3→GCS, local→S3, …); one
+  fast-list instead of per-object lookups, retries with backoff on every remote
+  call, tunable concurrency (`--jobs`); streaming export.
 - **Content-addressed snapshots & diff** — reproducible versions; compare any two.
 - **Strong validation** — unreadable images, missing/orphan labels, unknown
   classes, invalid/out-of-bounds boxes, exact + near duplicates, split leakage.
@@ -195,6 +199,10 @@ See the [Cloud Sync guide](https://caiowing.github.io/VisionPack/cloud-sync/).
   (WebDataset shards); exports hardlink from the CAS or stream from the cloud.
 - **Interoperable I/O** — YOLO (incl. YOLO-seg), COCO, ImageFolder in and out;
   semantic masks out.
+- **Machine-readable everything** — every pipeline command takes `--json` and
+  prints a stable, schema-versioned envelope on stdout, so services, UIs, and CI
+  can drive VisionPack without scraping text. See the
+  [JSON Output guide](https://caiowing.github.io/VisionPack/json-output/).
 
 Full command reference and per-command options live in the
 [CLI guide](https://caiowing.github.io/VisionPack/usage/).
@@ -246,7 +254,7 @@ multi-source ingestion (local and cloud) → validation → deterministic splits
 snapshots → ready-to-train export/packing → evaluation (`vp eval`) and
 model-in-the-loop labeling (`vp autolabel` / `vp queue`) — works end-to-end
 across classification, detection, instance/semantic segmentation, and keypoints,
-with 118 passing tests. APIs may still shift; feedback and contributions are
+with 143 passing tests. APIs may still shift; feedback and contributions are
 welcome.
 
 ```bash

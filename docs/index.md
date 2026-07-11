@@ -60,7 +60,8 @@ packs, and exports.
 |------|--------|----------|
 | **Classification** | ImageFolder (folder-per-class) | whole-image label |
 | **Detection** | YOLO, COCO | bounding box |
-| **Instance segmentation** | COCO | polygon |
+| **Instance segmentation** | YOLO-seg, COCO | polygon |
+| **Semantic segmentation (export)** | — | class-index mask PNGs (`--format masks`) |
 | **Keypoints / pose** | COCO | keypoints |
 
 ## What's in the box
@@ -68,10 +69,16 @@ packs, and exports.
 - **Deterministic, lockable splits** — `stratified` / `random` / `hash`, captured in snapshots.
 - **Near-duplicate & cross-split leakage detection** — perceptual-hash tier, scale-proof via LSH bucketing.
 - **Multi-source sync** — declarative `sources:` + `vp sync`, with per-asset provenance.
-- **Cloud-native** — sync from and to S3/GCS/Azure without downloading the whole dataset; see {% link cloud-sync.md %}.
+- **Cloud-native, multi-provider** — sync YOLO/COCO/ImageFolder sources from and to
+  S3/GCS/Azure without downloading the whole dataset, including cross-provider
+  targets; see [Cloud Sync]({% link cloud-sync.md %}).
 - **Content-addressed snapshots & diff** — reproducible versions; compare any two.
 - **Strong validation** — unreadable images, missing/orphan labels, unknown classes, bad boxes, exact + near duplicates, split leakage.
+- **Benchmarking & model-in-the-loop** — `vp eval` (mAP / accuracy on a locked split),
+  `vp autolabel` (confident predictions become labels), `vp queue` (what to label next).
 - **Packing & export** — `archive` (`.tar.zst`) and `training` (WebDataset shards); byte-free exports via hardlinks / streaming manifests.
+- **Machine-readable output** — every pipeline command takes `--json` and prints a
+  stable, schema-versioned envelope; see [JSON Output]({% link json-output.md %}).
 
 ## Next steps
 
@@ -79,6 +86,7 @@ packs, and exports.
 - [Quickstart]({% link quickstart.md %}) — a dataset in 60 seconds
 - [CLI Guide]({% link usage.md %}) — every command and its options
 - [Cloud Sync]({% link cloud-sync.md %}) — S3 / GCS / Azure datasets
+- [JSON Output]({% link json-output.md %}) — drive VisionPack from other programs
 
 {: .note }
 VisionPack is in **active development** (early but usable). The end-to-end

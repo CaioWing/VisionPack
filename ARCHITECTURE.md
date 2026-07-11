@@ -147,6 +147,23 @@ layouts). `vp sync` reconciles the index idempotently (content-addressed, so
 re-running skips what's present) and records per-asset provenance; `vp sync
 --dry-run` previews found/matched/unmatched/classes per source.
 
+**Multi-provider targets.** With a `target:` and `copy` mode, objects land in a
+content-addressed sink. Same-provider transfers are server-side (S3 CopyObject /
+GCS rewrite — bytes never transit the client). Cross-provider transfers
+(local→S3, S3→GCS, …) *relay* the bytes sync already read to compute the sha256:
+one read (needed anyway) + one upload (size-verified against the landed
+object), never a second download. Either way an unchanged re-sync stays
+metadata-only.
+
+**Request economy & resilience.** Target membership is resolved with one prefix
+listing per run (rclone-style fast-list), never a per-object existence check.
+Every remote call is wrapped in exponential-backoff retries
+(`sources/retry.py`); exhaustion surfaces as a per-object `IngestFailure`, so a
+flaky bucket degrades a sync instead of aborting it. Ingest concurrency is
+sized for latency-bound object stores (16+ workers for remote sources) and
+tunable with `vp sync --jobs`. Labels fetched during class inference are cached
+and replayed at ingest, so no remote label is ever read twice.
+
 ### Geometry model & task coverage (`core/models.py`, `formats/`)
 The tagged geometry above lets one dataset model cover the common CV tasks.
 Classification uses the ImageFolder convention; detection uses YOLO/COCO bbox;
@@ -223,11 +240,17 @@ The roadmap is sequenced so each phase unblocks the next.
 - [x] `vp pack --profile training` (WebDataset shards)
 - [ ] DuckDB index — deferred by decision (see Storage & index)
 
-### Multi-source ingestion ✅ (remote backends pending)
+### Multi-source ingestion ✅
 - [x] declarative `sources:` + `vp sync` (+ `--dry-run`), local backends, joins,
       provenance, class reconciliation, idempotent re-sync
-- [ ] remote backends via fsspec behind extras (s3/gcs/azure/git, pinned by ref)
-      and COCO-format sources, plugging into the same resolver layer
+- [x] remote YOLO/COCO/ImageFolder sources via fsspec behind extras
+      (s3/gcs/azure), metadata-only re-sync, content-addressed cloud target
+- [x] cross-provider `copy` targets (local↔S3, S3↔GCS, …): server-side copy when
+      providers match, single-pass verified byte relay when they don't
+- [x] hardening: retries with backoff on every remote call, fast-list target
+      membership (no per-object HEAD), `--jobs` concurrency control,
+      single-read remote labels
+- [ ] git sources pinned by ref
 
 ### Task coverage ✅ (beyond detection)
 - [x] tagged geometry model (bbox | polygon | keypoints | none), backward compatible
@@ -259,8 +282,10 @@ The roadmap is sequenced so each phase unblocks the next.
 - [ ] Hugging Face Datasets export
 
 ### Phase C — Reporting & polish
+- [x] machine-readable output: every pipeline command takes `--json` and prints
+      a schema-versioned envelope (`cli/output.py`) — the stable contract for
+      driving VisionPack from services/UIs/CI; errors are structured too
 - [ ] HTML validation / stats / drift reports
-- [ ] JSON report output for stats and diff
 - [ ] richer terminal output with `rich`
 - [ ] move CLI plumbing from `argparse` to `typer` once commands stabilize
 
