@@ -72,13 +72,24 @@ class Resolver(ABC):
     def read_bytes(self, uri: str) -> bytes: ...
 
     @abstractmethod
+    def write_bytes(self, uri: str, data: bytes) -> None:
+        """Write ``data`` to ``uri``, creating parents as the backend requires.
+
+        The upload half of a cross-provider relay: when a server-side copy is
+        impossible (source and target live on different providers), sync uploads
+        the bytes it already read for hashing — one read, one write, no second
+        round-trip.
+        """
+
+    @abstractmethod
     def server_copy(self, src_uri: str, dst_uri: str) -> None:
         """Copy ``src_uri`` to ``dst_uri`` without routing the bytes through us.
 
-        Same-provider only (v1): the copy happens inside the backend (S3
+        Same-provider only: the copy happens inside the backend (S3
         ``CopyObject`` / GCS rewrite / a local filesystem copy), so the client
         never downloads-then-uploads. Used by ``sync`` to land objects in a
-        content-addressed target bucket (see docs/SPEC-cloud-sync.md).
+        content-addressed target bucket; cross-provider transfers go through
+        :meth:`write_bytes` instead (the relay path).
         """
 
     @abstractmethod
@@ -132,6 +143,11 @@ class LocalResolver(Resolver):
 
     def read_bytes(self, uri: str) -> bytes:
         return self._path(uri).read_bytes()
+
+    def write_bytes(self, uri: str, data: bytes) -> None:
+        destination = self._path(uri)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
 
     def server_copy(self, src_uri: str, dst_uri: str) -> None:
         dst = self._path(dst_uri)
@@ -217,16 +233,20 @@ class FsspecResolver(Resolver):
         fs, path = self._fs_and_path(uri)
         return fs.cat_file(path)
 
+    def write_bytes(self, uri: str, data: bytes) -> None:
+        fs, path = self._fs_and_path(uri)
+        fs.pipe_file(path, data)
+
     def server_copy(self, src_uri: str, dst_uri: str) -> None:
         src_fs, src_path = self._fs_and_path(src_uri)
         dst_fs, dst_path = self._fs_and_path(dst_uri)
-        # v1 is same-provider: a cross-provider copy can't be server-side (it
-        # would have to transit the client), so refuse it loudly rather than
-        # silently downloading-then-uploading.
+        # A cross-provider copy can't be server-side (it would have to transit
+        # the client), so refuse it loudly rather than silently
+        # downloading-then-uploading — callers relay via write_bytes instead.
         if type(src_fs) is not type(dst_fs):
             raise VisionPackError(
                 f"Server-side copy needs source and target on the same provider "
-                f"(got {src_uri!r} -> {dst_uri!r}); cross-cloud transfer is not supported in v1."
+                f"(got {src_uri!r} -> {dst_uri!r}); use the relay path (write_bytes) for cross-provider transfer."
             )
         dst_fs.copy(src_path, dst_path)
 

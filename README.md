@@ -30,6 +30,8 @@ vp export --format yolo --split          # ready-to-train layout
 vp eval runs/predict/labels --format yolo    # mAP on the locked test set
 vp autolabel preds.json --min-confidence 0.6 # confident predictions -> labels
 vp queue --predictions preds.json            # what should a human label next?
+
+vp serve                # the same pipeline as a local web dashboard + REST API
 ```
 
 ---
@@ -64,7 +66,8 @@ pip install visionpack
 ```
 
 Cloud backends are optional extras: `pip install "visionpack[s3]"` (also `[gcs]`,
-`[azure]`). Requires Python 3.11+.
+`[azure]`). The web UI/API is `pip install "visionpack[server]"` (then `vp serve`).
+Requires Python 3.11+.
 
 Developing from source uses [`uv`](https://github.com/astral-sh/uv):
 
@@ -176,8 +179,15 @@ See the [Cloud Sync guide](https://caiowing.github.io/VisionPack/cloud-sync/).
   extra dependencies, scale-proof via LSH bucketing; surfaced in `vp validate`.
 - **Multi-source sync** — declarative `sources:` + `vp sync`, with per-asset
   provenance; idempotent re-sync that only pulls what's new.
-- **Cloud-native** — sync from and to S3/GCS/Azure without downloading the whole
-  dataset; server-side `copy` into a content-addressed target, streaming export.
+- **Cloud-native, multi-provider** — sync from and to S3/GCS/Azure without
+  downloading the whole dataset; server-side `copy` into a content-addressed
+  target when source and target share a provider, single-pass relay across
+  providers (S3→GCS, local→S3, …); streaming export.
+- **Web UI + REST API (`vp serve`)** — a local dashboard that makes the whole
+  pipeline point-and-click: sources with dry-run previews, live-progress sync /
+  validate / export jobs, stats and split composition, a thumbnail gallery that
+  streams from any provider, splits and snapshots. Everything it does is plain
+  JSON over HTTP (`/api/docs`), so it doubles as the integration surface.
 - **Content-addressed snapshots & diff** — reproducible versions; compare any two.
 - **Strong validation** — unreadable images, missing/orphan labels, unknown
   classes, invalid/out-of-bounds boxes, exact + near duplicates, split leakage.

@@ -35,8 +35,11 @@ pip install "visionpack[azure]"   # Azure Blob
   match, and does nothing — no downloads, no copies.
 
 {: .note }
-v1 is **same-provider** (S3↔S3 or GCS↔GCS). Cross-cloud transfer (S3↔GCS) is on
-the roadmap.
+Transfers are **server-side within one provider** (S3↔S3, GCS↔GCS) — the bytes
+never touch your machine. **Cross-provider** targets (S3→GCS, local→S3, S3→local
+…) also work: sync *relays* the bytes it already read to compute the `sha256`,
+so a cross-provider copy still costs exactly **one read + one upload**, never a
+second download.
 
 ## Declare remote sources
 
@@ -111,7 +114,7 @@ Pick how each source materializes its bytes with `copy:`.
 
 | Mode | What it does | Use when |
 |------|--------------|----------|
-| `copy` | Server-side copy into the `target:` content-addressed store. Target is self-sufficient; global dedup. | The common cloud case. |
+| `copy` | Copy into the `target:` content-addressed store — server-side when source and target share a provider, single-pass relay when they don't. Target is self-sufficient; global dedup. | The common cloud case. |
 | `reference` | No copy — the index points straight at the source object. | You control the source bucket and want zero extra storage. |
 | `ingest` | Download into the **local** CAS (`.vp/objects/`). | Offline / edge work on a remote dataset. |
 

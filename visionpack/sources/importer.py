@@ -92,16 +92,15 @@ class SourceSyncer:
         loc = _rebase_location(Location.parse(self.project.manifest.target), self.project.root)
         assert loc is not None  # parse of a non-empty value is never None
         target_uri = loc.resolved_uri()
-        # v1 is same-provider: a server-side copy can't bridge two providers, so
-        # reject e.g. a local source feeding an s3 target up front.
-        src_scheme = self._source_scheme()
-        if src_scheme != scheme_of(target_uri):
-            raise VisionPackError(
-                f"Source {self.source.name!r} copies into target {target_uri!r}, but the source "
-                f"({src_scheme or 'local'}) and target ({scheme_of(target_uri) or 'local'}) are different "
-                "providers; v1 supports same-provider copy only."
-            )
-        return CloudTarget(base_uri=target_uri, resolver=get_resolver(target_uri, _resolver_options(loc)))
+        # Same provider -> server-side copy (bytes never transit the client).
+        # Different providers (local -> s3, s3 -> gcs, ...) -> relay: upload the
+        # bytes the sync already read for hashing; still a single read.
+        server_side = self._source_scheme() == scheme_of(target_uri)
+        return CloudTarget(
+            base_uri=target_uri,
+            resolver=get_resolver(target_uri, _resolver_options(loc)),
+            server_side=server_side,
+        )
 
     def _source_scheme(self) -> str:
         loc = self.source.images or self.source.root
@@ -288,14 +287,15 @@ class SourceSyncer:
     def _store_blob(self, image_ref: FileRef, image_res: Resolver, data: bytes, digest: str) -> str:
         """Materialize the just-read bytes and return the asset ``path``.
 
-        ``reference`` keeps no copy; cloud ``copy`` lands the object in the target
-        CAS server-side (the bytes never transit the client — we only read them
-        once, above, for the hash); everything else writes the local CAS.
+        ``reference`` keeps no copy; ``copy`` with a target lands the object in
+        the target CAS — server-side when source and target share a provider,
+        otherwise by relaying the bytes we already read for the hash (still one
+        read total); everything else writes the local CAS.
         """
         if self.source.copy == "reference":
             return self._reference_path(image_ref, image_res)
         if self._target is not None:  # copy + a declared target
-            return self._target.ensure_object(image_ref.uri, digest)
+            return self._target.ensure_object(image_ref.uri, digest, data=data)
         local = image_res.local_path(image_ref.uri) or Path(image_ref.uri)
         return self.project.object_store.store(local, digest, self.source.copy, data=data)
 

@@ -107,8 +107,10 @@ class CloudTargetSyncTest(unittest.TestCase):
             with self.assertRaises(VisionPackError):
                 asset.resolved_path(Path(tmp))
 
-    def test_cross_provider_copy_is_rejected(self) -> None:
-        # A local source feeding a remote target can't be a server-side copy.
+    def test_cross_provider_copy_relays_already_read_bytes(self) -> None:
+        # A local source feeding a remote target can't be a server-side copy, so
+        # the sync relays the bytes it already read for hashing: one upload per
+        # object, no server_copy call, target still content-addressed.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             Project.init(root, name="x")
@@ -119,8 +121,66 @@ class CloudTargetSyncTest(unittest.TestCase):
             project.manifest.sources = [{"name": "s1", "images": imgs.as_posix(), "copy": "copy"}]
             project.manifest.target = "memory://dst"
             project.save_manifest()
-            with self.assertRaises(VisionPackError):
-                sync_sources(Project.open(root))
+
+            copies: list[str] = []
+            original = FsspecResolver.server_copy
+
+            def counting(self: FsspecResolver, src: str, dst: str) -> None:
+                copies.append(dst)
+                return original(self, src, dst)
+
+            FsspecResolver.server_copy = counting  # type: ignore[method-assign]
+            try:
+                summary = sync_sources(Project.open(root))[0]
+            finally:
+                FsspecResolver.server_copy = original  # type: ignore[method-assign]
+
+            self.assertEqual(summary.assets_added, 1)
+            self.assertEqual(copies, [], "cross-provider transfer must not attempt a server-side copy")
+            self.assertEqual(len(_target_objects(self.fs)), 1)
+            for asset in Project.open(root).index.assets():
+                self.assertTrue(asset.path.startswith("memory://dst/objects/sha256/"))
+
+    def test_cross_provider_resync_is_metadata_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Project.init(root, name="x")
+            imgs = root / "imgs"
+            imgs.mkdir()
+            (imgs / "a.png").write_bytes(_png_bytes(1))
+            project = Project.open(root)
+            project.manifest.sources = [{"name": "s1", "images": imgs.as_posix(), "copy": "copy"}]
+            project.manifest.target = "memory://dst"
+            project.save_manifest()
+            sync_sources(Project.open(root))
+
+            writes: list[str] = []
+            original = FsspecResolver.write_bytes
+
+            def counting(self: FsspecResolver, uri: str, data: bytes) -> None:
+                writes.append(uri)
+                return original(self, uri, data)
+
+            FsspecResolver.write_bytes = counting  # type: ignore[method-assign]
+            try:
+                summary = sync_sources(Project.open(root))[0]
+            finally:
+                FsspecResolver.write_bytes = original  # type: ignore[method-assign]
+
+            self.assertEqual(summary.assets_added, 0)
+            self.assertEqual(summary.assets_existing, 1)
+            self.assertEqual(writes, [], "unchanged cross-provider re-sync re-uploaded objects")
+
+    def test_remote_source_relays_into_local_target(self) -> None:
+        # memory:// source, local-directory target: the opposite relay direction.
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as dst:
+            project = self._project(tmp, "copy", target=Path(dst).as_posix())
+            summary = sync_sources(project)[0]
+            self.assertEqual(summary.assets_added, 2)
+            landed = sorted(p for p in Path(dst).rglob("*") if p.is_file())
+            self.assertEqual(len(landed), 2)
+            for path in landed:
+                self.assertIn("objects/sha256/", path.as_posix())
 
 
 class ManifestTargetTest(unittest.TestCase):
