@@ -151,8 +151,18 @@ re-running skips what's present) and records per-asset provenance; `vp sync
 content-addressed sink. Same-provider transfers are server-side (S3 CopyObject /
 GCS rewrite — bytes never transit the client). Cross-provider transfers
 (local→S3, S3→GCS, …) *relay* the bytes sync already read to compute the sha256:
-one read (needed anyway) + one upload, never a second download. Either way an
-unchanged re-sync stays metadata-only.
+one read (needed anyway) + one upload (size-verified against the landed
+object), never a second download. Either way an unchanged re-sync stays
+metadata-only.
+
+**Request economy & resilience.** Target membership is resolved with one prefix
+listing per run (rclone-style fast-list), never a per-object existence check.
+Every remote call is wrapped in exponential-backoff retries
+(`sources/retry.py`); exhaustion surfaces as a per-object `IngestFailure`, so a
+flaky bucket degrades a sync instead of aborting it. Ingest concurrency is
+sized for latency-bound object stores (16+ workers for remote sources) and
+tunable with `vp sync --jobs`. Labels fetched during class inference are cached
+and replayed at ingest, so no remote label is ever read twice.
 
 ### Geometry model & task coverage (`core/models.py`, `formats/`)
 The tagged geometry above lets one dataset model cover the common CV tasks.
@@ -230,15 +240,17 @@ The roadmap is sequenced so each phase unblocks the next.
 - [x] `vp pack --profile training` (WebDataset shards)
 - [ ] DuckDB index — deferred by decision (see Storage & index)
 
-### Multi-source ingestion ✅ (remote COCO/ImageFolder pending)
+### Multi-source ingestion ✅
 - [x] declarative `sources:` + `vp sync` (+ `--dry-run`), local backends, joins,
       provenance, class reconciliation, idempotent re-sync
-- [x] remote YOLO backends via fsspec behind extras (s3/gcs/azure), metadata-only
-      re-sync, content-addressed cloud target
+- [x] remote YOLO/COCO/ImageFolder sources via fsspec behind extras
+      (s3/gcs/azure), metadata-only re-sync, content-addressed cloud target
 - [x] cross-provider `copy` targets (local↔S3, S3↔GCS, …): server-side copy when
-      providers match, single-pass byte relay when they don't
-- [ ] remote COCO and ImageFolder sources (today they require a local path);
-      git sources pinned by ref
+      providers match, single-pass verified byte relay when they don't
+- [x] hardening: retries with backoff on every remote call, fast-list target
+      membership (no per-object HEAD), `--jobs` concurrency control,
+      single-read remote labels
+- [ ] git sources pinned by ref
 
 ### Task coverage ✅ (beyond detection)
 - [x] tagged geometry model (bbox | polygon | keypoints | none), backward compatible

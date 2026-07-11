@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager
@@ -8,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from visionpack.core.errors import VisionPackError
-from visionpack.core.models import Annotation, Asset, utc_now
+from visionpack.core.models import Annotation, Asset, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
 from visionpack.formats.base import IngestFailure
 from visionpack.formats.yolo import parse_yolo_label_text
@@ -66,14 +67,18 @@ class SourceSyncer:
     so images already in the store are recognized and not re-added.
     """
 
-    def __init__(self, project: Project, source: Source) -> None:
+    def __init__(self, project: Project, source: Source, max_workers: int | None = None) -> None:
         self.project = project
         # Manifest paths are project-relative; resolve them against the project
         # root (not the cwd) so `vp sync` works from any directory.
         self.source = _rebase_source(source, project.root)
+        self.max_workers = max_workers
         # The cloud sink for `copy` mode, built only when one is actually needed
         # (copy + a declared target); otherwise objects stay in the local CAS.
         self._target = self._build_target()
+        # Label texts read once during class inference, replayed at ingest so a
+        # remote label file never costs two GETs.
+        self._label_texts: dict[str, str] = {}
 
     # -- resolvers ------------------------------------------------------------
 
@@ -105,6 +110,21 @@ class SourceSyncer:
     def _source_scheme(self) -> str:
         loc = self.source.images or self.source.root
         return scheme_of(loc.resolved_uri()) if loc is not None else ""
+
+    def _pool_size(self) -> int | None:
+        """Worker count for the ingest pool (``--jobs`` wins).
+
+        Object-store throughput is latency-bound, not CPU-bound, so the
+        CPU-derived executor default undersizes remote syncs on small machines;
+        remote sources get a floor of 16 concurrent transfers. Local sources
+        keep the executor default (disk parallelism saturates early).
+        """
+        if self.max_workers is not None:
+            return self.max_workers
+        if self._source_scheme() not in ("", "file"):
+            cpus = os.cpu_count() or 1
+            return max(16, min(32, cpus + 4))
+        return None
 
     # -- public ---------------------------------------------------------------
 
@@ -163,29 +183,45 @@ class SourceSyncer:
             images_without_label=result.images_without_label,
             labels_without_image=len(result.labels_without_image),
         )
-        existing_ids = {asset.id for asset in self.project.index.assets()}
         # Load every cached probe for this run's images in one query, so the
         # per-image lookup in the threads below never opens a connection.
         self.project.index.prime_blob_cache([image.uri for image, _ in result.pairs])
 
-        # Reading bytes, hashing, probing, perceptual-hashing and storing are
-        # per-image and I/O-bound, so fan them out across threads (matching
-        # YoloImporter). Index mutation stays on this thread; pool.map preserves
-        # input order, so the result is deterministic regardless of scheduling.
         def process(
             pair: tuple[FileRef, FileRef | None],
         ) -> tuple[Asset, Annotation | None, int, _CacheWrite | None] | IngestFailure:
             image_ref, label_ref = pair
             try:
-                label_text = label_res.read_bytes(label_ref.uri).decode("utf-8") if label_ref else None
+                label_text = self._label_text(label_ref, label_res) if label_ref else None
                 origin = label_ref.uri if label_ref else None
                 return self._ingest(image_ref, image_res, label_text, origin, index_to_class_id)
             except (VisionPackError, OSError) as exc:
                 return IngestFailure(path=image_ref.uri, error=str(exc))
 
-        total = len(result.pairs)
-        with ThreadPoolExecutor() as pool:
-            for done, outcome in enumerate(pool.map(process, result.pairs), 1):
+        self._drain_pool(process, result.pairs, summary, progress)
+        self._record(summary, images_loc, labels_loc)
+        return summary
+
+    def _label_text(self, label_ref: FileRef, label_res: Resolver | None) -> str:
+        # Class inference may already have fetched this label; never GET twice.
+        cached = self._label_texts.pop(label_ref.uri, None)
+        if cached is not None:
+            return cached
+        assert label_res is not None  # a label ref implies a label resolver
+        return label_res.read_bytes(label_ref.uri).decode("utf-8")
+
+    def _drain_pool(self, process, items, summary: SourceSyncSummary, progress: ProgressCallback | None) -> None:
+        """Fan ``process`` out over ``items`` and fold outcomes into ``summary``.
+
+        Reading bytes, hashing, probing, perceptual-hashing and storing are
+        per-item and I/O-bound, so they run across threads. Index mutation
+        stays on this thread; ``pool.map`` preserves input order, so the result
+        is deterministic regardless of scheduling.
+        """
+        existing_ids = {asset.id for asset in self.project.index.assets()}
+        total = len(items)
+        with ThreadPoolExecutor(max_workers=self._pool_size()) as pool:
+            for done, outcome in enumerate(pool.map(process, items), 1):
                 if isinstance(outcome, IngestFailure):
                     summary.failures.append(outcome)
                 else:
@@ -206,9 +242,6 @@ class SourceSyncer:
                 if progress is not None:
                     progress(done, total)
 
-        self._record(summary, images_loc, labels_loc)
-        return summary
-
     def _ingest(
         self,
         image_ref: FileRef,
@@ -217,39 +250,49 @@ class SourceSyncer:
         label_origin: str | None,
         index_to_class_id: dict[int, str],
     ) -> tuple[Asset, Annotation | None, int, _CacheWrite | None]:
-        probe, cache_write = self._resolve_blob(image_ref, image_res)
-        digest = probe["sha256"]
-        width, height = probe["width"], probe["height"]
-        asset_id = f"asset_{digest[:16]}"
-        asset = Asset(
-            id=asset_id,
-            sha256=digest,
-            media_type="image",
-            path=probe["stored_path"],
-            original_path=image_ref.uri,
-            width=width,
-            height=height,
-            channels=probe["channels"],
-            format=probe["format"],
-            size_bytes=probe["size_bytes"],
-            phash=probe["phash"],
-            source=self.source.name,
-        )
-
+        asset, cache_write = self._ingest_asset(image_ref, image_res)
         annotation: Annotation | None = None
         object_count = 0
         if label_text is not None:
-            objects = parse_yolo_label_text(label_text, label_origin or image_ref.uri, width, height, index_to_class_id)
+            objects = parse_yolo_label_text(
+                label_text, label_origin or image_ref.uri, asset.width, asset.height, index_to_class_id
+            )
             object_count = len(objects)
             annotation = Annotation(
-                id=f"ann_{asset_id}",
-                asset_id=asset_id,
+                id=f"ann_{asset.id}",
+                asset_id=asset.id,
                 task=self.project.manifest.task,
                 format="internal",
                 objects=objects,
                 source={"type": "sync", "format": "yolo", "source": self.source.name, "path": label_origin, "imported_at": utc_now()},
             )
         return asset, annotation, object_count, cache_write
+
+    def _ingest_asset(self, image_ref: FileRef, image_res: Resolver) -> tuple[Asset, _CacheWrite | None]:
+        """Read/probe/store one image and build its ``Asset`` — format-agnostic.
+
+        The shared core of every source format: YOLO wraps it with label
+        parsing, ImageFolder with a whole-image label, COCO with its record
+        conversion. All of them inherit the probe cache and the copy-mode /
+        cloud-target routing for free.
+        """
+        probe, cache_write = self._resolve_blob(image_ref, image_res)
+        digest = probe["sha256"]
+        asset = Asset(
+            id=f"asset_{digest[:16]}",
+            sha256=digest,
+            media_type="image",
+            path=probe["stored_path"],
+            original_path=image_ref.uri,
+            width=probe["width"],
+            height=probe["height"],
+            channels=probe["channels"],
+            format=probe["format"],
+            size_bytes=probe["size_bytes"],
+            phash=probe["phash"],
+            source=self.source.name,
+        )
+        return asset, cache_write
 
     def _resolve_blob(self, image_ref: FileRef, image_res: Resolver) -> tuple[dict, _CacheWrite | None]:
         """Probe an image, skipping the body read when it is provably unchanged.
@@ -341,8 +384,32 @@ class SourceSyncer:
                     names = found
                     break
         if not names:
-            names = _infer_class_names(labels, label_res)
+            names = self._infer_class_names(labels, label_res)
         return [self._remap(index, name) for index, name in enumerate(names)]
+
+    def _infer_class_names(self, labels: list[FileRef], label_res: Resolver | None) -> list[str]:
+        """Infer ``class_N`` names from the highest class index used in labels.
+
+        Label bodies are fetched in parallel and cached, so ingest replays them
+        instead of issuing a second GET per label (labels are tiny; the cache is
+        drained as ingest consumes it).
+        """
+        if label_res is None or not labels:
+            return []
+        with ThreadPoolExecutor(max_workers=self._pool_size()) as pool:
+            texts = pool.map(lambda ref: label_res.read_bytes(ref.uri).decode("utf-8"), labels)
+            self._label_texts = {ref.uri: text for ref, text in zip(labels, texts, strict=True)}
+        max_class = -1
+        for text in self._label_texts.values():
+            for line in text.splitlines():
+                stripped = line.strip().lstrip("﻿")
+                if not stripped:
+                    continue
+                try:
+                    max_class = max(max_class, int(float(stripped.split()[0])))
+                except (ValueError, IndexError):
+                    continue
+        return [f"class_{index}" for index in range(max_class + 1)]
 
     def _explicit_class_names(self) -> list[str]:
         if self.source.classes is None:
@@ -392,10 +459,7 @@ class SourceSyncer:
         images_path = image_res.local_path(images_loc.resolved_uri())
         labels_path = label_res.local_path(labels_loc.resolved_uri())
         if images_path is None or labels_path is None:
-            raise VisionPackError(
-                f"COCO source {self.source.name!r} currently supports local images/labels only "
-                "(remote COCO arrives with the fsspec backends in Phase 2)."
-            )
+            return self._run_coco_remote(images_loc, labels_loc, image_res, label_res, progress)
         before = {asset.id for asset in self.project.index.assets()}
         result = CocoImporter(self.project, labels_path, images_path, copy_mode=self.source.copy).run(progress)
         added = self._tag_provenance(before)
@@ -408,6 +472,98 @@ class SourceSyncer:
             classes_added=result.classes_added,
             failures=result.failures,
         )
+
+    def _run_coco_remote(
+        self,
+        images_loc: Location,
+        labels_loc: Location,
+        image_res: Resolver,
+        label_res: Resolver,
+        progress: ProgressCallback | None,
+    ) -> SourceSyncSummary:
+        """COCO over any resolver: the JSON is one read, images stream through
+        the shared blob pipeline (probe cache, copy modes, cloud target)."""
+        import json
+        from collections import defaultdict
+
+        from visionpack.core.manifest import class_id_from_name
+        from visionpack.formats.coco import geometry_from_record
+
+        labels_uri = labels_loc.resolved_uri()
+        try:
+            document = json.loads(label_res.read_bytes(labels_uri).decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise VisionPackError(f"COCO annotation file is not valid JSON: {labels_uri} ({exc})") from exc
+        if not isinstance(document, dict):
+            raise VisionPackError(f"COCO annotation file must contain a JSON object at the top level: {labels_uri}")
+
+        categories = {int(cat["id"]): str(cat.get("name", cat["id"])) for cat in document.get("categories", [])}
+        # Merge classes by (remapped) name, exactly like the local importer.
+        remapped = {cat_id: self._remap(index, name) for index, (cat_id, name) in enumerate(categories.items())}
+        classes_added = self.project.manifest.merge_classes(list(remapped.values()))
+        name_to_id = {item.name: item.id for item in self.project.manifest.classes}
+        category_to_class_id = {
+            cat_id: name_to_id.get(name, class_id_from_name(name)) for cat_id, name in remapped.items()
+        }
+
+        annotations_by_image: dict[int, list[dict]] = defaultdict(list)
+        for record in document.get("annotations", []):
+            annotations_by_image[int(record["image_id"])].append(record)
+
+        refs = image_res.list_files(images_loc.resolved_uri(), IMAGE_EXTENSIONS)
+        # file_name is relative to the images root; fall back to the bare
+        # basename only when it is unambiguous across the listing.
+        by_rel = {f"{ref.relkey}{ref.suffix}": ref for ref in refs}
+        by_name: dict[str, FileRef | None] = {}
+        for ref in refs:
+            name = f"{ref.stem}{ref.suffix}"
+            by_name[name] = None if name in by_name else ref
+
+        def resolve_ref(file_name: str) -> FileRef | None:
+            rel = file_name.replace("\\", "/").lstrip("./")
+            return by_rel.get(rel) or by_name.get(rel.rsplit("/", 1)[-1])
+
+        images = document.get("images", [])
+        matched = [resolve_ref(str(record.get("file_name"))) for record in images]
+        self.project.index.prime_blob_cache([ref.uri for ref in matched if ref is not None])
+        summary = SourceSyncSummary(name=self.source.name, classes_added=classes_added)
+        task = self.project.manifest.task
+
+        def process(record: dict) -> tuple[Asset, Annotation | None, int, _CacheWrite | None] | IngestFailure:
+            file_name = str(record.get("file_name"))
+            try:
+                ref = resolve_ref(file_name)
+                if ref is None:
+                    raise VisionPackError(
+                        f"COCO image not found under {images_loc.resolved_uri()}: file_name={file_name!r} "
+                        f"(image id={record.get('id')})"
+                    )
+                asset, cache_write = self._ingest_asset(ref, image_res)
+                objects = [
+                    ObjectAnnotation(
+                        class_id=category_to_class_id.get(int(item["category_id"]), str(item["category_id"])),
+                        geometry=geometry_from_record(item, task, file_name),
+                        attributes={"iscrowd": int(item["iscrowd"])} if item.get("iscrowd") else {},
+                    )
+                    for item in annotations_by_image.get(int(record["id"]), [])
+                ]
+                annotation: Annotation | None = None
+                if objects:
+                    annotation = Annotation(
+                        id=f"ann_{asset.id}",
+                        asset_id=asset.id,
+                        task=task,
+                        format="internal",
+                        objects=objects,
+                        source={"type": "sync", "format": "coco", "source": self.source.name, "path": labels_uri, "imported_at": utc_now()},
+                    )
+                return asset, annotation, len(objects), cache_write
+            except (VisionPackError, OSError) as exc:
+                return IngestFailure(path=file_name, error=str(exc))
+
+        self._drain_pool(process, images, summary, progress)
+        self._record(summary, images_loc, labels_loc)
+        return summary
 
     # -- ImageFolder (classification) -----------------------------------------
 
@@ -443,10 +599,7 @@ class SourceSyncer:
         resolver = self._resolver(root)
         root_path = resolver.local_path(root.resolved_uri())
         if root_path is None:
-            raise VisionPackError(
-                f"ImageFolder source {self.source.name!r} currently supports a local root only "
-                "(remote backends arrive with fsspec in Phase 2)."
-            )
+            return self._run_imagefolder_remote(root, resolver, progress)
         before = {asset.id for asset in self.project.index.assets()}
         result = ImageFolderImporter(self.project, root_path, copy_mode=self.source.copy).run(progress)
         added = self._tag_provenance(before)
@@ -459,6 +612,47 @@ class SourceSyncer:
             classes_added=result.classes_added,
             failures=result.failures,
         )
+
+    def _run_imagefolder_remote(
+        self, root: Location, resolver: Resolver, progress: ProgressCallback | None
+    ) -> SourceSyncSummary:
+        """ImageFolder over any resolver: the class is the first path segment
+        under the root, each image gets a whole-image label (no geometry)."""
+        refs = resolver.list_files(root.resolved_uri(), IMAGE_EXTENSIONS)
+        labeled = [(ref, ref.relkey.split("/")[0]) for ref in refs if "/" in ref.relkey]
+        if not labeled:
+            raise VisionPackError(
+                f"No class subdirectories found under {root.resolved_uri()}. "
+                "Expected layout: <root>/<class-name>/<image-files>."
+            )
+        raw_names = sorted({name for _, name in labeled})
+        remapped = {raw: self._remap(index, raw) for index, raw in enumerate(raw_names)}
+        classes_added = self.project.manifest.merge_classes(list(remapped.values()))
+        name_to_id = {item.name: item.id for item in self.project.manifest.classes}
+
+        self.project.index.prime_blob_cache([ref.uri for ref, _ in labeled])
+        summary = SourceSyncSummary(name=self.source.name, classes_added=classes_added)
+        task = self.project.manifest.task
+
+        def process(item: tuple[FileRef, str]) -> tuple[Asset, Annotation | None, int, _CacheWrite | None] | IngestFailure:
+            ref, raw_name = item
+            try:
+                asset, cache_write = self._ingest_asset(ref, resolver)
+                annotation = Annotation(
+                    id=f"ann_{asset.id}",
+                    asset_id=asset.id,
+                    task=task,
+                    format="internal",
+                    objects=[ObjectAnnotation(class_id=name_to_id[remapped[raw_name]], geometry=None)],
+                    source={"type": "sync", "format": "imagefolder", "source": self.source.name, "path": ref.uri, "imported_at": utc_now()},
+                )
+                return asset, annotation, 1, cache_write
+            except (VisionPackError, OSError) as exc:
+                return IngestFailure(path=ref.uri, error=str(exc))
+
+        self._drain_pool(process, labeled, summary, progress)
+        self._record(summary, root, None)
+        return summary
 
     # -- shared ---------------------------------------------------------------
 
@@ -575,32 +769,18 @@ def _rebase_source(source: Source, root: Path) -> Source:
     )
 
 
-def _infer_class_names(labels: list[FileRef], label_res: Resolver | None) -> list[str]:
-    if label_res is None:
-        return []
-    max_class = -1
-    for ref in labels:
-        for line in label_res.read_bytes(ref.uri).decode("utf-8").splitlines():
-            stripped = line.strip().lstrip("﻿")
-            if not stripped:
-                continue
-            try:
-                max_class = max(max_class, int(float(stripped.split()[0])))
-            except (ValueError, IndexError):
-                continue
-    return [f"class_{index}" for index in range(max_class + 1)]
-
-
 def sync_sources(
     project: Project,
     source_name: str | None = None,
     progress_factory: Callable[[str], AbstractContextManager[ProgressCallback | None]] | None = None,
+    max_workers: int | None = None,
 ) -> list[SourceSyncSummary]:
     """Sync the declared sources. ``progress_factory`` (e.g. ``cli_progress``)
-    yields a fresh progress callback per source so each gets its own bar."""
+    yields a fresh progress callback per source so each gets its own bar.
+    ``max_workers`` overrides the per-source ingest concurrency (``--jobs``)."""
     summaries: list[SourceSyncSummary] = []
     for source in _select_sources(project, source_name):
-        syncer = SourceSyncer(project, source)
+        syncer = SourceSyncer(project, source, max_workers=max_workers)
         if progress_factory is None:
             summaries.append(syncer.run())
         else:

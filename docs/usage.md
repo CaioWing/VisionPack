@@ -119,6 +119,7 @@ sources:
 vp sync --dry-run   # preview found / matched / unmatched / classes per source
 vp sync             # ingest; idempotent, records per-asset provenance
 vp sync --source camera-A   # sync just one source
+vp sync --jobs 32   # concurrent transfers per source (remote defaults to 16+)
 ```
 
 Sources can also live in object stores. Remote URIs go anywhere a local path

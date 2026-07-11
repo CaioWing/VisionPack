@@ -176,10 +176,12 @@ See the [Cloud Sync guide](https://caiowing.github.io/VisionPack/cloud-sync/).
   extra dependencies, scale-proof via LSH bucketing; surfaced in `vp validate`.
 - **Multi-source sync** — declarative `sources:` + `vp sync`, with per-asset
   provenance; idempotent re-sync that only pulls what's new.
-- **Cloud-native, multi-provider** — sync from and to S3/GCS/Azure without
-  downloading the whole dataset; server-side `copy` into a content-addressed
-  target when source and target share a provider, single-pass relay across
-  providers (S3→GCS, local→S3, …); streaming export.
+- **Cloud-native, multi-provider** — sync YOLO, COCO, and ImageFolder sources
+  from S3/GCS/Azure without downloading the whole dataset; server-side `copy`
+  into a content-addressed target when source and target share a provider,
+  single-pass verified relay across providers (S3→GCS, local→S3, …); one
+  fast-list instead of per-object lookups, retries with backoff on every remote
+  call, tunable concurrency (`--jobs`); streaming export.
 - **Content-addressed snapshots & diff** — reproducible versions; compare any two.
 - **Strong validation** — unreadable images, missing/orphan labels, unknown
   classes, invalid/out-of-bounds boxes, exact + near duplicates, split leakage.

@@ -135,7 +135,7 @@ class CocoImporter:
         records = annotations_by_image.get(int(image_record["id"]), [])
         objects: list[ObjectAnnotation] = []
         for record in records:
-            geometry = _geometry_from_record(record, self.project.manifest.task, file_name)
+            geometry = geometry_from_record(record, self.project.manifest.task, file_name)
             objects.append(
                 ObjectAnnotation(
                     class_id=category_to_class_id.get(int(record["category_id"]), str(record["category_id"])),
@@ -260,7 +260,7 @@ def export_coco(
     return result
 
 
-def _geometry_from_record(record: dict[str, Any], task: str, file_name: str) -> Geometry:
+def geometry_from_record(record: dict[str, Any], task: str, file_name: str) -> Geometry:
     """Pick the geometry to keep for a COCO annotation, guided by the task.
 
     COCO records often carry several geometries at once (a segmentation plus its

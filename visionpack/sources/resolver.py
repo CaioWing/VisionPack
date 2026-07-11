@@ -9,6 +9,7 @@ from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
 
 from visionpack.core.errors import VisionPackError
+from visionpack.sources.retry import with_retries
 
 
 @dataclass(slots=True)
@@ -171,6 +172,11 @@ class FsspecResolver(Resolver):
     The provider library (``s3fs``/``gcsfs``/``adlfs``) is an optional extra; it
     is imported lazily by :func:`get_resolver`, never by the core. Filesystem
     instances are cached by fsspec itself, so resolving per call is cheap.
+
+    Every network call goes through :func:`with_retries`: transient provider
+    errors (throttling, dropped connections, 5xx) are retried with exponential
+    backoff, and exhaustion surfaces as a :class:`VisionPackError` so ingest
+    records a per-object failure instead of aborting the sync.
     """
 
     def __init__(self, scheme: str, storage_options: dict[str, Any] | None = None) -> None:
@@ -201,17 +207,18 @@ class FsspecResolver(Resolver):
 
     def exists(self, uri: str) -> bool:
         fs, path = self._fs_and_path(uri)
-        return bool(fs.exists(path))
+        return bool(with_retries(f"exists({uri})", lambda: fs.exists(path)))
 
     def list_files(self, uri: str, suffixes: set[str] | None = None) -> list[FileRef]:
         fs, root = self._fs_and_path(uri)
-        if not fs.exists(root):
+        if not with_retries(f"exists({uri})", lambda: fs.exists(root)):
             raise VisionPackError(f"Source location does not exist: {uri}")
         base = root.rstrip("/")
         refs: list[FileRef] = []
         # detail=True returns size + etag in the same paginated LIST, so a sync
         # needs no per-object HEAD (the metadata-only listing the spec promises).
-        for path, info in sorted(fs.find(root, detail=True).items()):
+        listing = with_retries(f"list({uri})", lambda: fs.find(root, detail=True))
+        for path, info in sorted(listing.items()):
             name = path.rsplit("/", 1)[-1]
             suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
             if suffixes is not None and suffix not in suffixes:
@@ -227,15 +234,15 @@ class FsspecResolver(Resolver):
 
     def stat(self, uri: str) -> ObjectStat:
         fs, path = self._fs_and_path(uri)
-        return self._stat_from_info(fs.info(path))
+        return self._stat_from_info(with_retries(f"stat({uri})", lambda: fs.info(path)))
 
     def read_bytes(self, uri: str) -> bytes:
         fs, path = self._fs_and_path(uri)
-        return fs.cat_file(path)
+        return with_retries(f"read({uri})", lambda: fs.cat_file(path))
 
     def write_bytes(self, uri: str, data: bytes) -> None:
         fs, path = self._fs_and_path(uri)
-        fs.pipe_file(path, data)
+        with_retries(f"write({uri})", lambda: fs.pipe_file(path, data))
 
     def server_copy(self, src_uri: str, dst_uri: str) -> None:
         src_fs, src_path = self._fs_and_path(src_uri)
@@ -248,7 +255,7 @@ class FsspecResolver(Resolver):
                 f"Server-side copy needs source and target on the same provider "
                 f"(got {src_uri!r} -> {dst_uri!r}); use the relay path (write_bytes) for cross-provider transfer."
             )
-        dst_fs.copy(src_path, dst_path)
+        with_retries(f"copy({src_uri} -> {dst_uri})", lambda: dst_fs.copy(src_path, dst_path))
 
     def local_path(self, uri: str) -> Path | None:
         # Remote objects have no local path; ingest works from in-memory bytes.

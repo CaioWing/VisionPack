@@ -19,6 +19,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         action="store_true",
         help="Report what each source would ingest (found/matched/unmatched) without writing",
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        help="Concurrent transfers per source (default: 16+ for remote sources, CPU-derived for local)",
+    )
     parser.set_defaults(func=run)
 
 
@@ -44,7 +49,7 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     with project_lock(project.root):
-        summaries = sync_sources(project, args.source, progress_factory=cli_progress)
+        summaries = sync_sources(project, args.source, progress_factory=cli_progress, max_workers=args.jobs)
     total_added = 0
     total_failures = 0
     for summary in summaries:
