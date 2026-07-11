@@ -218,7 +218,7 @@ class SourceSyncer:
         stays on this thread; ``pool.map`` preserves input order, so the result
         is deterministic regardless of scheduling.
         """
-        existing_ids = {asset.id for asset in self.project.index.assets()}
+        existing_ids = self.project.index.asset_ids()
         total = len(items)
         with ThreadPoolExecutor(max_workers=self._pool_size()) as pool:
             for done, outcome in enumerate(pool.map(process, items), 1):
@@ -460,7 +460,7 @@ class SourceSyncer:
         labels_path = label_res.local_path(labels_loc.resolved_uri())
         if images_path is None or labels_path is None:
             return self._run_coco_remote(images_loc, labels_loc, image_res, label_res, progress)
-        before = {asset.id for asset in self.project.index.assets()}
+        before = self.project.index.asset_ids()
         result = CocoImporter(self.project, labels_path, images_path, copy_mode=self.source.copy).run(progress)
         added = self._tag_provenance(before)
         return SourceSyncSummary(
@@ -600,7 +600,7 @@ class SourceSyncer:
         root_path = resolver.local_path(root.resolved_uri())
         if root_path is None:
             return self._run_imagefolder_remote(root, resolver, progress)
-        before = {asset.id for asset in self.project.index.assets()}
+        before = self.project.index.asset_ids()
         result = ImageFolderImporter(self.project, root_path, copy_mode=self.source.copy).run(progress)
         added = self._tag_provenance(before)
         return SourceSyncSummary(

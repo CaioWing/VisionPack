@@ -4,6 +4,40 @@ All notable changes to VisionPack are tracked here.
 
 ## [Unreleased]
 
+- Distribution drift between snapshots (`vp diff v1 v2 --drift`, SDK
+  `ds.drift("v1", "v2")`): per-class object counts and distribution-share
+  deltas (biggest movers first) plus smoothed KL and Jensen–Shannon divergence,
+  computed from the stats frozen in each snapshot — reproducible forever.
+- Dataset → model lineage (`vp snapshot tag v4 trained:run-812`): free-form
+  tags on snapshots (add/`--remove`, shown in `snapshot list`/`show`); SDK
+  `tag_snapshot`/`untag_snapshot`/`snapshots_by_tag` (a bare `key:` prefix
+  matches any value).
+- `vp import --format auto` (now the default): the import format is detected
+  from the dataset's structure — instances-style JSON means COCO (a directory
+  with the JSON next to the images works too), `.txt` labels or
+  classes/data.yaml furniture means YOLO, folder-per-class means ImageFolder;
+  ambiguous layouts ask for an explicit `--format` instead of guessing. The
+  SDK's `import_dir` defaults to `auto` as well.
+- Python SDK (`visionpack.sdk`): the whole dataset lifecycle behind one class,
+  `VisionPackClient` — init/open, import, sync, validate, audit, stats, splits,
+  snapshots (including read-only `checkout(version)` views), export, and the
+  model loop (evaluate/autolabel/annotation queue). Mutating methods take the
+  same project lock the CLI takes, and summaries come back as the same
+  JSON-friendly shapes the `--json` envelopes carry.
+- `vp audit`: label-health audit (roadmap Phase B) — duplicate same-class boxes,
+  degenerate (tiny) boxes, edge-pinned and whole-image boxes, aspect-ratio
+  outliers, rare classes, and class imbalance. Findings are advisory by default
+  (`--fail-on-findings` gates CI); thresholds configurable via flags or
+  `validation.audit` in `visionpack.yaml`; `--json` supported.
+- Security: class names arriving from imported data (folder names, COCO
+  categories, `classes.txt`) are sanitized before being used as export path
+  components, so a hostile name like `../../x` can no longer write outside the
+  export directory.
+- Robustness: a decompression-bomb image (header claiming absurd dimensions)
+  now records a per-file ingest failure instead of aborting the whole
+  import/sync batch.
+- Performance: sync/import now read only asset *ids* when checking which assets
+  already exist (`SELECT id`), instead of materializing every asset record.
 - Model-in-the-loop foundation: a shared predictions loader
   (`visionpack/predictions.py`) reads model output in three formats — vp-native
   JSON, COCO results/instances JSON, and YOLO txt directories (what Ultralytics

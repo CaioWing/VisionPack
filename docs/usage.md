@@ -88,8 +88,15 @@ raw/
 Import the dataset:
 
 ```bash
-vp import ./raw --format yolo
+vp import ./raw                 # format auto-detected from the layout
+vp import ./raw --format yolo   # or say it explicitly
 ```
+
+`--format` defaults to `auto`: a `.json` annotations file (or a directory with
+an instances-style JSON at its root) is COCO, `.txt` labels or
+`classes.txt`/`data.yaml` mean YOLO, and images living only under
+folder-per-class subdirectories mean ImageFolder. When the layout is ambiguous
+the command asks you to pass `--format` instead of guessing.
 
 By default, VisionPack ingests images into `.vp/objects/sha256` and indexes them by content hash. You can choose another copy mode:
 
@@ -166,6 +173,40 @@ vp validate --report reports/validation.json
 
 The current validator checks image readability, missing annotations, orphan labels, unknown classes, invalid boxes, boxes outside image bounds, duplicate exact assets, and split leakage.
 
+## Audit Label Health (vp audit)
+
+`vp validate` catches labels that are *invalid*; `vp audit` finds labels that
+are valid but *suspicious* — the ones that usually turn out to be annotation
+mistakes:
+
+```bash
+vp audit
+```
+
+It reports duplicate boxes (the same object labeled twice), degenerate (tiny)
+boxes, boxes pinned to two or more image borders, whole-image boxes, extreme
+aspect-ratio outliers, rare classes, and dataset-level class imbalance.
+
+Findings are advisory (exit code 0). Gate CI on them explicitly:
+
+```bash
+vp audit --fail-on-findings
+```
+
+Thresholds can be tuned per run (`--min-box-px`, `--duplicate-iou`,
+`--max-aspect-ratio`, `--imbalance-ratio`, `--min-class-count`) or persisted in
+`visionpack.yaml`:
+
+```yaml
+validation:
+  audit:
+    min_box_px: 12
+    duplicate_iou: 0.85
+```
+
+Like every pipeline command, `vp audit --json` prints a machine-readable
+envelope with per-code counts and the full findings list.
+
 ## Show Statistics
 
 Print a summary:
@@ -208,6 +249,19 @@ vp snapshot show v1
 
 Snapshots store hashes for the manifest, assets, annotations, splits, and summary stats. They are written to `.vp/snapshots/`.
 
+### Lineage tags (which dataset trained this model?)
+
+After a training run, stamp the snapshot it consumed:
+
+```bash
+vp snapshot tag v4 trained:run-812
+```
+
+Tags are free-form (the `key:value` convention is just a convention), show up
+in `vp snapshot list`/`show`, and can be removed with `--remove`. From the SDK,
+`ds.snapshots_by_tag("trained:")` lists every version any run trained on — so
+"which dataset produced this model?" is a lookup, not archaeology.
+
 ## Diff Snapshots
 
 Compare two snapshots:
@@ -223,6 +277,20 @@ vp diff v1 v2 --json
 ```
 
 The diff reports added and removed assets, added/removed/modified annotations, class changes, split changes, and before/after stats.
+
+### Distribution drift
+
+`--drift` adds a class-distribution comparison: per-class object counts and
+distribution-share deltas (biggest movers first), plus KL and Jensen–Shannon
+divergence as single drift scores a CI job can threshold:
+
+```bash
+vp diff v1 v2 --drift
+vp diff v1 v2 --drift --json   # adds a "drift" object to the diff payload
+```
+
+Because it derives from the stats frozen inside each snapshot, the drift
+between two versions is reproducible forever.
 
 ## Export YOLO
 
@@ -323,25 +391,27 @@ The archive includes:
 
 ## Python API
 
-The public API is intentionally small while the project is early:
+The supported programmatic surface is the SDK — the whole CLI workflow behind
+one Python class, with the same locking and result shapes (see the
+[Python SDK]({% link sdk.md %}) page):
 
 ```python
-from visionpack import Dataset
+from visionpack.sdk import VisionPackClient
 
-ds = Dataset.open(".")
-print(ds.manifest.name)
-print(len(ds.index.assets()))
+ds = VisionPackClient.open(".")
+print(ds.name, len(ds))
+ds.validate()
+ds.export("./exports/yolo", format="yolo", split="default")
 ```
 
-More stable SDK methods will be added as the internal workflows settle.
+The lower-level `visionpack.Dataset` / `Project` handle stays available as
+`ds.project` for anything the facade doesn't cover yet.
 
 ## Current Limitations
 
 - segmentation metrics in `vp eval` use each polygon's enclosing box (mask IoU
   is planned); YOLO-pose import/export and a dedicated keypoint importer are
   not implemented yet
-- `--format auto` detection on import is not implemented; pass `--format`
-  explicitly (predictions for `vp eval`/`autolabel`/`queue` *are* auto-detected)
 - `vp annotate` is scaffolded but not implemented yet
 - cloud sync (S3/GCS/Azure) is **same-provider** in v1 — cross-cloud transfer
   (S3↔GCS) and remote COCO/ImageFolder sync are planned; `pack` is local-only

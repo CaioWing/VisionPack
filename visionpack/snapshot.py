@@ -45,6 +45,9 @@ def create_snapshot(project: Project, message: str) -> dict[str, Any]:
         # Stored directly (small) so opening a snapshot doesn't need to load the
         # whole inventory blob just to recover the class list.
         "classes": [item.to_dict() for item in project.manifest.classes],
+        # Free-form lineage tags added later via `vp snapshot tag` (e.g.
+        # trained:run-812); created empty so the shape is stable.
+        "tags": [],
     }
     (snapshot_dir / f"{version}.json").write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return load_snapshot(project, version)
@@ -66,6 +69,52 @@ def _read_snapshot_file(project: Project, version: str) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Snapshot not found: {version}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def tag_snapshot(project: Project, version: str, tag: str) -> dict[str, Any]:
+    """Attach a free-form tag to a snapshot (idempotent), returning its record.
+
+    This is the dataset -> model lineage link: after training, stamp the exact
+    dataset version the run consumed (``vp snapshot tag v4 trained:run-812``),
+    and "which dataset trained this model?" becomes a lookup instead of a
+    guess. Tags are free-form strings; ``key:value`` is the convention.
+    """
+    cleaned = tag.strip()
+    if not cleaned:
+        raise VisionPackError("Tag must be a non-empty string (convention: key:value, e.g. trained:run-812).")
+    payload = _read_snapshot_file(project, version)
+    tags = list(payload.get("tags", []))
+    if cleaned not in tags:
+        tags.append(cleaned)
+        payload["tags"] = tags
+        _write_snapshot_file(project, version, payload)
+    return load_snapshot(project, version)
+
+
+def untag_snapshot(project: Project, version: str, tag: str) -> dict[str, Any]:
+    """Remove a tag from a snapshot (no error if it wasn't there)."""
+    payload = _read_snapshot_file(project, version)
+    tags = [item for item in payload.get("tags", []) if item != tag.strip()]
+    if tags != payload.get("tags", []):
+        payload["tags"] = tags
+        _write_snapshot_file(project, version, payload)
+    return load_snapshot(project, version)
+
+
+def find_snapshots_by_tag(project: Project, tag: str) -> list[dict[str, Any]]:
+    """Snapshots carrying ``tag`` exactly, or any ``key:*`` tag when ``tag`` is
+    a bare ``key:`` prefix (so ``trained:`` lists every trained version)."""
+    matches = []
+    for snapshot in list_snapshots(project):
+        tags = snapshot.get("tags", [])
+        if tag in tags or (tag.endswith(":") and any(item.startswith(tag) for item in tags)):
+            matches.append(snapshot)
+    return matches
+
+
+def _write_snapshot_file(project: Project, version: str, payload: dict[str, Any]) -> None:
+    path = project.root / ".vp" / "snapshots" / f"{version}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def load_snapshot(project: Project, version: str) -> dict[str, Any]:

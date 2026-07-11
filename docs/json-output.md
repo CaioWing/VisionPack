@@ -53,10 +53,12 @@ Rules a consumer can rely on:
 | `vp sync --dry-run --json` | `plans[]` (per source: `images_found`, `labels_found`, `matched`, `class_names[]`) |
 | `vp import ... --json` | `assets`, `annotations`, `objects`, `classes_added`, `recorded_source`, `failures[]` |
 | `vp validate --json` | `ok`, `errors`, `warnings`, `issues[]` (severity, code, message, asset_id, path) |
+| `vp audit --json` | `ok`, `findings`, `by_code` (code → count), `class_counts`, `items[]` (code, message, asset_id, path, class_id) |
 | `vp stats --json` | `stats` (counts, `class_distribution`, `resolutions`), `splits` (per-split breakdowns) |
 | `vp split create/lock/list/show --json` | `id`, `strategy`, `locked`, `sets` (name → count); `show` adds `asset_ids` |
-| `vp snapshot create/list/show --json` | snapshot records (`version`, `message`, `created_at`, `stats`) |
-| `vp diff v1 v2 --json` | `assets_added/removed`, `annotations_added/removed/modified`, `classes_added/removed`, `splits_changed` |
+| `vp snapshot create/list/show --json` | snapshot records (`version`, `message`, `created_at`, `stats`, `tags[]`) |
+| `vp snapshot tag ... --json` | `version`, `tag`, `removed`, `tags[]` (the snapshot's tags after the change) |
+| `vp diff v1 v2 --json` | `assets_added/removed`, `annotations_added/removed/modified`, `classes_added/removed`, `splits_changed`; with `--drift`: `drift` (`classes[]` share deltas, `kl_divergence`, `js_divergence`) |
 | `vp export --json` | `format`, `output`, per-format counts (`images`, `objects`, `sets`, `streamed`) |
 | `vp pack --json` | `profile`, `format`, shard/archive counts and paths |
 | `vp fsck --json` | `ok`, `mode`, `checked_assets`, `checked_objects`, `issues[]` |

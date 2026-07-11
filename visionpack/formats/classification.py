@@ -8,7 +8,7 @@ from typing import Any
 from visionpack.core.errors import FormatError, VisionPackError
 from visionpack.core.models import Annotation, Asset, ObjectAnnotation, utc_now
 from visionpack.core.project import Project
-from visionpack.formats.base import ImportSummary, IngestFailure
+from visionpack.formats.base import ImportSummary, IngestFailure, safe_path_component
 from visionpack.media import image_info_from_bytes, is_image_path
 from visionpack.perceptual import dhash_bytes
 from visionpack.progress import ProgressCallback
@@ -161,7 +161,7 @@ def export_imagefolder(
         if label_obj is None:
             skipped += 1
             continue
-        class_name = id_to_name.get(label_obj.class_id, label_obj.class_id)
+        class_name = safe_path_component(id_to_name.get(label_obj.class_id, label_obj.class_id))
         parts = [output, set_name, class_name] if split_id else [output, class_name]
         target_dir = Path(*[str(part) for part in parts])
         target_dir.mkdir(parents=True, exist_ok=True)

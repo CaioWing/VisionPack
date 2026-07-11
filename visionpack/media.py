@@ -27,7 +27,7 @@ def image_info(path: Path) -> tuple[int, int, int | None, str]:
     try:
         with Image.open(path) as img:
             return _probe(img, path)
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
         raise FormatError(f"File is not a readable image: {path} ({exc})") from exc
 
 
@@ -36,11 +36,15 @@ def image_info_from_bytes(data: bytes, source: Path) -> tuple[int, int, int | No
 
     Used by import, where the bytes have just been read to compute the content
     hash, so dimensions and hash come from a single read of the file.
+
+    ``DecompressionBombError`` (a header claiming absurd dimensions) subclasses
+    neither ``OSError`` nor ``ValueError``, so it is caught explicitly — one
+    hostile file must become a per-file ingest failure, not abort the batch.
     """
     try:
         with Image.open(BytesIO(data)) as img:
             return _probe(img, source)
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
         raise FormatError(f"File is not a readable image: {source} ({exc})") from exc
 
 
