@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -111,18 +112,17 @@ class LocalResolver(Resolver):
         if not root.exists():
             raise VisionPackError(f"Source location does not exist: {uri}")
         if root.is_file():
-            files = [root]
+            files = [(root, root.stat())]
             base = root.parent
         else:
-            files = [path for path in root.rglob("*") if path.is_file()]
+            files = _scan_tree(root)
             base = root
         refs: list[FileRef] = []
-        for path in sorted(files):
+        for path, info in sorted(files, key=lambda item: item[0]):
             suffix = path.suffix.lower()
             if suffixes is not None and suffix not in suffixes:
                 continue
             rel = path.relative_to(base)
-            info = path.stat()
             refs.append(
                 FileRef(
                     uri=str(path),
@@ -164,6 +164,27 @@ class LocalResolver(Resolver):
             parsed = urlparse(uri)
             return Path(url2pathname(unquote(parsed.path)))
         return Path(uri)
+
+
+def _scan_tree(root: Path) -> list[tuple[Path, os.stat_result]]:
+    """Walk ``root`` with ``os.scandir``, capturing each file's stat in the pass.
+
+    ``rglob`` costs two syscalls per entry (``is_file`` + the later ``stat``);
+    scandir's dirent caching folds that into one, which matters on large trees
+    and network filesystems. Directory symlinks are not followed and file
+    symlinks are, matching ``rglob``'s behavior.
+    """
+    files: list[tuple[Path, os.stat_result]] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=True):
+                    files.append((Path(entry.path), entry.stat()))
+    return files
 
 
 class FsspecResolver(Resolver):

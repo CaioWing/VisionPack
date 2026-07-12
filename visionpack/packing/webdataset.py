@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tarfile
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO
 
+import orjson
 import zstandard as zstd
 
 from visionpack.core.errors import VisionPackError
-from visionpack.core.models import Asset, Keypoints, Polygon, utc_now
+from visionpack.core.models import Annotation, Asset, Keypoints, Polygon, utc_now
 from visionpack.core.project import Project
 from visionpack.split import resolve_export_sets
 
@@ -75,9 +78,8 @@ def pack_training(
         buckets[name].append(asset)
 
     ordered = set_names or sorted(buckets)
-    shard_records: list[dict[str, Any]] = []
     set_counts: dict[str, int] = {}
-    total_samples = 0
+    tasks: list[tuple[str, str, list[Asset]]] = []  # (set, shard file name, assets)
 
     for set_name in ordered:
         assets = sorted(buckets.get(set_name, []), key=lambda item: item.id)
@@ -86,8 +88,24 @@ def pack_training(
         prefix = "data" if (split_id is None and set_name == "all") else set_name
         for shard_index, start in enumerate(range(0, len(assets), shard_size)):
             chunk = assets[start : start + shard_size]
-            shard_name = f"{prefix}-{shard_index:06d}{extension}"
-            count = _write_shard(project, output_dir / shard_name, chunk, class_index, compression, level)
+            tasks.append((set_name, f"{prefix}-{shard_index:06d}{extension}", chunk))
+
+    # Shards are independent tar streams, so they are written in parallel; the
+    # asset->annotation map is materialized once up front so shard workers only
+    # do dict reads (never touch the index).
+    annotations = {annotation.asset_id: annotation for annotation in project.index.annotations()}
+    shard_records: list[dict[str, Any]] = []
+    total_samples = 0
+    if tasks:
+        workers = min(len(tasks), max(1, os.cpu_count() or 1))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            counts = list(
+                pool.map(
+                    lambda task: _write_shard(project, output_dir / task[1], task[2], annotations, class_index, compression, level),
+                    tasks,
+                )
+            )
+        for (set_name, shard_name, _), count in zip(tasks, counts, strict=True):
             shard_records.append({"name": shard_name, "split": set_name, "samples": count})
             total_samples += count
 
@@ -124,6 +142,7 @@ def _write_shard(
     project: Project,
     path: Path,
     assets: list[Asset],
+    annotations: dict[str, Annotation],
     class_index: dict[str, int],
     compression: str,
     level: int,
@@ -138,7 +157,7 @@ def _write_shard(
             tar = tarfile.open(fileobj=handle, mode="w|")
         with tar:
             for asset in assets:
-                _write_sample(tar, project, asset, class_index)
+                _write_sample(tar, project, asset, annotations.get(asset.id), class_index)
     finally:
         if compressor is not None:
             compressor.close()
@@ -146,7 +165,9 @@ def _write_shard(
     return len(assets)
 
 
-def _write_sample(tar: tarfile.TarFile, project: Project, asset: Asset, class_index: dict[str, int]) -> None:
+def _write_sample(
+    tar: tarfile.TarFile, project: Project, asset: Asset, annotation: Annotation | None, class_index: dict[str, int]
+) -> None:
     source = asset.resolved_path(project.root)
     if not source.exists():
         raise VisionPackError(f"Cannot pack missing asset {asset.id}: {source}")
@@ -156,11 +177,10 @@ def _write_sample(tar: tarfile.TarFile, project: Project, asset: Asset, class_in
     # The two members must share the same key and be consecutive so WebDataset
     # groups them into one sample.
     _add_bytes(tar, f"{asset.id}{suffix}", image_bytes)
-    _add_bytes(tar, f"{asset.id}.json", _sample_label(project, asset, class_index))
+    _add_bytes(tar, f"{asset.id}.json", _sample_label(asset, annotation, class_index))
 
 
-def _sample_label(project: Project, asset: Asset, class_index: dict[str, int]) -> bytes:
-    annotation = project.index.annotation_for_asset(asset.id)
+def _sample_label(asset: Asset, annotation: Annotation | None, class_index: dict[str, int]) -> bytes:
     objects: list[dict[str, Any]] = []
     if annotation:
         for obj in annotation.objects:
@@ -182,7 +202,7 @@ def _sample_label(project: Project, asset: Asset, class_index: dict[str, int]) -
                 entry["keypoints"] = obj.geometry.points
             objects.append(entry)
     document = {"key": asset.id, "width": asset.width, "height": asset.height, "objects": objects}
-    return json.dumps(document).encode("utf-8")
+    return orjson.dumps(document)
 
 
 def _add_bytes(tar: tarfile.TarFile, name: str, payload: bytes) -> None:

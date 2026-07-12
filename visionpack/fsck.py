@@ -51,6 +51,11 @@ def run_fsck(project: Project, deep: bool = False, check_orphans: bool = True) -
         checked_assets += 1
         asset_ids.add(asset.id)
         referenced_sha.add(asset.sha256)
+        if asset.is_remote:
+            # Bytes live in a remote object store; there is no local file to
+            # check (and resolved_path would raise). Referential checks below
+            # still cover the asset.
+            continue
         path = asset.resolved_path(project.root)
         if not path.exists():
             issues.append(FsckIssue("error", "object.missing", f"{asset.id}: stored object not found at {path}"))
