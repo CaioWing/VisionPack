@@ -87,6 +87,20 @@ class DuplicatesTest(unittest.TestCase):
             report = validate_project(Project.open(root))
             self.assertIn("split.near_duplicate_leakage", [issue.code for issue in report.errors])
 
+    def test_identical_hashes_expand_to_all_distance_zero_pairs(self) -> None:
+        # Re-encoded copies share the exact hash; the collapsed LSH path must
+        # still report every pair, at distance 0, and leave distinct images out.
+        phashes = {"a": "00000000000000ff", "b": "00000000000000ff", "c": "00000000000000ff", "d": "ffffffffffffff00"}
+        pairs = near_duplicate_pairs(phashes, threshold=5)
+        self.assertEqual({(p.asset_a, p.asset_b, p.distance) for p in pairs}, {("a", "b", 0), ("a", "c", 0), ("b", "c", 0)})
+
+    def test_close_but_not_identical_hashes_still_pair_across_groups(self) -> None:
+        # 2 bits apart (<= threshold): the pair must survive the identical-hash
+        # collapse and carry the true distance.
+        phashes = {"a": "00000000000000ff", "b": "00000000000000fc"}
+        pairs = near_duplicate_pairs(phashes, threshold=5)
+        self.assertEqual([(pairs[0].asset_a, pairs[0].asset_b, pairs[0].distance)], [("a", "b", 2)])
+
     def test_phash_is_persisted_on_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

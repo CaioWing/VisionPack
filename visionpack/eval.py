@@ -101,9 +101,13 @@ def _evaluate_detection(project: Project, predictions: PredictionSet, asset_ids:
     for class_id in class_ids:
         class_preds = sorted(preds.get(class_id, []), key=lambda item: -item[0])
         num_gt = gt_counts.get(class_id, 0)
-        aps = {threshold: _average_precision(_match(class_preds, truths[class_id], threshold), num_gt) for threshold in IOU_THRESHOLDS}
-        confident = [item for item in class_preds if item[0] >= conf_threshold]
-        tp = sum(_match(confident, truths[class_id], 0.5))
+        # Each prediction's IoUs against its image's ground truth are computed
+        # once and replayed for every threshold, instead of once per threshold.
+        pred_ious = _pred_ious(class_preds, truths[class_id])
+        aps = {threshold: _average_precision(_match(class_preds, pred_ious, threshold), num_gt) for threshold in IOU_THRESHOLDS}
+        confident_indices = [index for index, item in enumerate(class_preds) if item[0] >= conf_threshold]
+        confident = [class_preds[index] for index in confident_indices]
+        tp = sum(_match(confident, [pred_ious[index] for index in confident_indices], 0.5))
         per_class[class_id] = {
             "gt": num_gt,
             "predictions": len(class_preds),
@@ -129,25 +133,37 @@ def _evaluate_detection(project: Project, predictions: PredictionSet, asset_ids:
     }
 
 
-def _match(class_preds: list[tuple[float, str, BBox]], gt_by_asset: dict[str, list[BBox]], iou_threshold: float) -> list[bool]:
+def _pred_ious(class_preds: list[tuple[float, str, BBox]], gt_by_asset: dict[str, list[BBox]]) -> list[list[tuple[float, int]]]:
+    """For each prediction, its ``(iou, gt_index)`` candidates, best IoU first.
+
+    The sort is stable, so ties keep ground-truth enumeration order — matching
+    then behaves exactly like a per-threshold argmax with ``>`` comparison.
+    """
+    ious: list[list[tuple[float, int]]] = []
+    for _, asset_id, box in class_preds:
+        candidates = [(bbox_iou(box, gt_box), index) for index, gt_box in enumerate(gt_by_asset.get(asset_id, []))]
+        candidates = [item for item in candidates if item[0] > 0.0]
+        candidates.sort(key=lambda item: -item[0])
+        ious.append(candidates)
+    return ious
+
+
+def _match(class_preds: list[tuple[float, str, BBox]], pred_ious: list[list[tuple[float, int]]], iou_threshold: float) -> list[bool]:
     """Greedy COCO-style matching: each prediction (confidence-ordered) claims the
     best still-unmatched ground-truth box in its image. Returns TP flags."""
     matched: dict[str, set[int]] = defaultdict(set)
     flags: list[bool] = []
-    for _, asset_id, box in class_preds:
-        candidates = gt_by_asset.get(asset_id, [])
-        best_iou, best_index = 0.0, -1
-        for index, gt_box in enumerate(candidates):
-            if index in matched[asset_id]:
+    for (_, asset_id, _), candidates in zip(class_preds, pred_ious, strict=True):
+        hit = False
+        for iou, gt_index in candidates:
+            if iou < iou_threshold:
+                break  # sorted best-first: nothing below qualifies either
+            if gt_index in matched[asset_id]:
                 continue
-            iou = bbox_iou(box, gt_box)
-            if iou > best_iou:
-                best_iou, best_index = iou, index
-        if best_index >= 0 and best_iou >= iou_threshold:
-            matched[asset_id].add(best_index)
-            flags.append(True)
-        else:
-            flags.append(False)
+            matched[asset_id].add(gt_index)
+            hit = True
+            break
+        flags.append(hit)
     return flags
 
 

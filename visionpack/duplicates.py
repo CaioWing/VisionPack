@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from visionpack.core.errors import VisionPackError
@@ -46,18 +47,30 @@ def phash_map(project: Project, assets: list[Asset] | None = None, *, persist: b
     """
     assets = assets if assets is not None else project.index.assets()
     result: dict[str, str] = {}
-    backfilled: list[Asset] = []
+    missing: list[Asset] = []
     for asset in assets:
         if asset.phash:
             result[asset.id] = asset.phash
-            continue
-        try:
-            value = dhash_path(asset.resolved_path(project.root))
-        except VisionPackError:
-            continue
-        result[asset.id] = value
-        asset.phash = value
-        backfilled.append(asset)
+        else:
+            missing.append(asset)
+
+    backfilled: list[Asset] = []
+    if missing:
+        # Decoding image headers is I/O-bound and per-asset, so the backfill
+        # fans out across threads (unreadable/remote assets come back as None).
+        def compute(asset: Asset) -> str | None:
+            try:
+                return dhash_path(asset.resolved_path(project.root))
+            except VisionPackError:
+                return None
+
+        with ThreadPoolExecutor() as pool:
+            for asset, value in zip(missing, pool.map(compute, missing), strict=True):
+                if value is None:
+                    continue
+                result[asset.id] = value
+                asset.phash = value
+                backfilled.append(asset)
     if persist and backfilled:
         for asset in backfilled:
             project.index.upsert_asset(asset)
@@ -66,30 +79,51 @@ def phash_map(project: Project, assets: list[Asset] | None = None, *, persist: b
 
 
 def near_duplicate_pairs(phashes: dict[str, str], threshold: int = DEFAULT_THRESHOLD) -> list[NearDuplicatePair]:
-    """Find every pair of assets within ``threshold`` bits, via LSH bucketing."""
-    bands = max(1, threshold + 1)
-    buckets: dict[tuple[int, int], list[tuple[str, int]]] = defaultdict(list)
-    for asset_id, phash in phashes.items():
-        value = int(phash, 16)
-        for key in band_keys(value, bands):
-            buckets[key].append((asset_id, value))
+    """Find every pair of assets within ``threshold`` bits, via LSH bucketing.
 
-    seen: set[tuple[str, str]] = set()
+    Assets sharing the *exact* hash are collapsed to one value first: batches of
+    re-encoded near-uniform images (flat backgrounds, calibration plates) all
+    land on the same hash, and running them through the bucket loop individually
+    is the pathological O(n^2) case. The LSH comparison count is therefore
+    bounded by the number of *distinct* hashes, and identical-hash groups expand
+    to distance-0 pairs directly.
+    """
+    by_value: dict[int, list[str]] = defaultdict(list)
+    for asset_id, phash in phashes.items():
+        by_value[int(phash, 16)].append(asset_id)
+
     pairs: list[NearDuplicatePair] = []
+    for ids in by_value.values():
+        if len(ids) > 1:
+            ids.sort()
+            pairs.extend(NearDuplicatePair(a, b, 0) for i, a in enumerate(ids) for b in ids[i + 1 :])
+
+    bands = max(1, threshold + 1)
+    buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for value in by_value:
+        for key in band_keys(value, bands):
+            buckets[key].append(value)
+
+    # A pair over the threshold can never come back under it, so it is marked
+    # seen too — no bucket sharing another band re-XORs the same pair.
+    seen: set[tuple[int, int]] = set()
     for bucket in buckets.values():
         if len(bucket) < 2:
             continue
         for i in range(len(bucket)):
-            a_id, a_val = bucket[i]
+            a_val = bucket[i]
             for j in range(i + 1, len(bucket)):
-                b_id, b_val = bucket[j]
-                key = (a_id, b_id) if a_id < b_id else (b_id, a_id)
+                b_val = bucket[j]
+                key = (a_val, b_val) if a_val < b_val else (b_val, a_val)
                 if key in seen:
                     continue
+                seen.add(key)
                 distance = (a_val ^ b_val).bit_count()
                 if distance <= threshold:
-                    seen.add(key)
-                    pairs.append(NearDuplicatePair(key[0], key[1], distance))
+                    for a_id in by_value[a_val]:
+                        for b_id in by_value[b_val]:
+                            first, second = (a_id, b_id) if a_id < b_id else (b_id, a_id)
+                            pairs.append(NearDuplicatePair(first, second, distance))
     pairs.sort(key=lambda pair: (pair.distance, pair.asset_a, pair.asset_b))
     return pairs
 

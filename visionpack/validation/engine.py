@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from visionpack.core.models import Asset
 from visionpack.core.project import Project
 from visionpack.duplicates import (
     DEFAULT_THRESHOLD,
@@ -49,31 +51,15 @@ def validate_project(project: Project, strict: bool = False) -> ValidationReport
     asset_by_id = {asset.id: asset for asset in assets}
     annotations_by_asset = {annotation.asset_id: annotation for annotation in annotations}
 
-    for asset in assets:
-        source = asset.resolved_path(project.root)
-        try:
-            width, height, _, _ = image_info(source)
-            if width != asset.width or height != asset.height:
-                issues.append(
-                    ValidationIssue(
-                        "warning",
-                        "image.dimensions_changed",
-                        f"Image dimensions changed for {asset.original_path}: indexed {asset.width}x{asset.height}, found {width}x{height}",
-                        asset.id,
-                        str(source),
-                    )
-                )
-        except Exception as exc:  # noqa: BLE001 - validation should aggregate all readable failures
-            issues.append(
-                ValidationIssue(
-                    "error",
-                    "image.unreadable",
-                    f"Unreadable image for {asset.original_path}: {exc}",
-                    asset.id,
-                    str(source),
-                )
-            )
+    # Header probes decode each image's metadata from disk — I/O-bound and
+    # independent per asset, so they fan out across threads. `pool.map`
+    # preserves input order, keeping the report deterministic.
+    with ThreadPoolExecutor() as pool:
+        for issue in pool.map(lambda asset: _probe_asset(project, asset), assets):
+            if issue is not None:
+                issues.append(issue)
 
+    for asset in assets:
         if asset.id not in annotations_by_asset:
             severity = "error" if strict or project.manifest.validation.get("require_annotations") else "warning"
             issues.append(
@@ -164,6 +150,37 @@ def validate_project(project: Project, strict: bool = False) -> ValidationReport
                     )
 
     return ValidationReport(issues)
+
+
+def _probe_asset(project: Project, asset: Asset) -> ValidationIssue | None:
+    """Re-probe one asset's image header, reporting drift or unreadability.
+
+    Remote (cloud-backed) assets have no local file to open; their bytes were
+    probed at sync time and are covered by the referential checks, so they are
+    skipped here instead of surfacing as false ``image.unreadable`` errors.
+    """
+    if asset.is_remote:
+        return None
+    source = asset.resolved_path(project.root)
+    try:
+        width, height, _, _ = image_info(source)
+    except Exception as exc:  # noqa: BLE001 - validation should aggregate all readable failures
+        return ValidationIssue(
+            "error",
+            "image.unreadable",
+            f"Unreadable image for {asset.original_path}: {exc}",
+            asset.id,
+            str(source),
+        )
+    if width != asset.width or height != asset.height:
+        return ValidationIssue(
+            "warning",
+            "image.dimensions_changed",
+            f"Image dimensions changed for {asset.original_path}: indexed {asset.width}x{asset.height}, found {width}x{height}",
+            asset.id,
+            str(source),
+        )
+    return None
 
 
 def _perceptual_issues(project, assets, asset_by_id) -> list[ValidationIssue]:

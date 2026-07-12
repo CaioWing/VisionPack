@@ -10,6 +10,7 @@ from typing import Any
 from visionpack.core.errors import VisionPackError
 from visionpack.core.models import ClassDef, utc_now
 from visionpack.core.project import Project
+from visionpack.index.sqlite_index import checkpoint_db
 from visionpack.stats import collect_stats
 from visionpack.storage.hash import sha256_bytes, sha256_file, stable_json_hash
 
@@ -160,6 +161,7 @@ def _freeze_index(project: Project) -> str | None:
     source = project.root / ".vp" / "db" / "index.db"
     if not source.exists():
         return None
+    checkpoint_db(source)  # fold any WAL so the copied file is self-contained
     digest = sha256_file(source)
     target = _dbs_dir(project) / f"{digest}.db"
     target.parent.mkdir(parents=True, exist_ok=True)

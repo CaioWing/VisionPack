@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -214,33 +214,38 @@ class SourceSyncer:
         """Fan ``process`` out over ``items`` and fold outcomes into ``summary``.
 
         Reading bytes, hashing, probing, perceptual-hashing and storing are
-        per-item and I/O-bound, so they run across threads. Index mutation
-        stays on this thread; ``pool.map`` preserves input order, so the result
-        is deterministic regardless of scheduling.
+        per-item and I/O-bound, so they run across threads. Outcomes are
+        consumed as they complete (one slow object never head-of-line blocks
+        progress) but folded in input order on this thread afterwards, so the
+        index and summary stay deterministic regardless of scheduling.
         """
         existing_ids = self.project.index.asset_ids()
         total = len(items)
+        outcomes: list[tuple[Asset, Annotation | None, int, _CacheWrite | None] | IngestFailure | None] = [None] * total
         with ThreadPoolExecutor(max_workers=self._pool_size()) as pool:
-            for done, outcome in enumerate(pool.map(process, items), 1):
-                if isinstance(outcome, IngestFailure):
-                    summary.failures.append(outcome)
-                else:
-                    asset, annotation, object_count, cache_write = outcome
-                    # Cache writes mutate the index, so they stay on this thread.
-                    if cache_write is not None:
-                        self.project.index.put_blob_probe(*cache_write)
-                    self.project.index.upsert_asset(asset)
-                    if asset.id in existing_ids:
-                        summary.assets_existing += 1
-                    else:
-                        summary.assets_added += 1
-                        existing_ids.add(asset.id)
-                    if annotation is not None:
-                        self.project.index.upsert_annotation(annotation)
-                        summary.annotations += 1
-                        summary.objects += object_count
+            futures = {pool.submit(process, item): position for position, item in enumerate(items)}
+            for done, future in enumerate(as_completed(futures), 1):
+                outcomes[futures[future]] = future.result()
                 if progress is not None:
                     progress(done, total)
+        for outcome in outcomes:
+            if isinstance(outcome, IngestFailure):
+                summary.failures.append(outcome)
+            elif outcome is not None:
+                asset, annotation, object_count, cache_write = outcome
+                # Cache writes mutate the index, so they stay on this thread.
+                if cache_write is not None:
+                    self.project.index.put_blob_probe(*cache_write)
+                self.project.index.upsert_asset(asset)
+                if asset.id in existing_ids:
+                    summary.assets_existing += 1
+                else:
+                    summary.assets_added += 1
+                    existing_ids.add(asset.id)
+                if annotation is not None:
+                    self.project.index.upsert_annotation(annotation)
+                    summary.annotations += 1
+                    summary.objects += object_count
 
     def _ingest(
         self,

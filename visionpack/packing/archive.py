@@ -12,6 +12,7 @@ import zstandard as zstd
 from visionpack.core.errors import VisionPackError
 from visionpack.core.models import utc_now
 from visionpack.core.project import Project
+from visionpack.index.sqlite_index import checkpoint_db
 from visionpack.stats import collect_stats
 
 
@@ -51,6 +52,7 @@ def pack_archive(project: Project, output: Path | None = None, profile_name: str
 
         index_path = project.root / ".vp" / "db" / "index.db"
         if index_path.exists():
+            checkpoint_db(index_path)  # fold any WAL so the packed file is self-contained
             files += _add_path(tar, index_path, ".vp/db/index.db")
 
         if include_metadata:
@@ -115,7 +117,10 @@ class _TarZstWriter:
     def open(self, archive_format: str) -> _TarContext:
         self._file = self.path.open("wb")
         if archive_format == "tar.zst":
-            compressor = zstd.ZstdCompressor(level=self.compression_level)
+            # threads=-1 enables zstd's own multi-threaded compression (one
+            # worker per core); the archive is a single stream, so this is
+            # where the parallelism has to come from.
+            compressor = zstd.ZstdCompressor(level=self.compression_level, threads=-1)
             self._zstd = compressor.stream_writer(self._file, closefd=False)
             tar = tarfile.open(fileobj=self._zstd, mode="w|")
         else:

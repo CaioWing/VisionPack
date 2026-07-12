@@ -10,6 +10,21 @@ import orjson
 
 from visionpack.core.models import Annotation, Asset, Split
 
+
+def checkpoint_db(path: Path) -> None:
+    """Fold any WAL into ``path`` so the bare file is complete and copyable.
+
+    Connections are short-lived so SQLite normally checkpoints on close, but
+    anything that hashes or copies ``index.db`` as a file (snapshot freeze,
+    archive pack) must not depend on that — an explicit truncating checkpoint
+    makes the main file self-contained.
+    """
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS assets (id TEXT PRIMARY KEY, data BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS annotations (id TEXT PRIMARY KEY, asset_id TEXT NOT NULL, data BLOB NOT NULL);
@@ -85,7 +100,15 @@ class SqliteIndex:
 
     def _connect(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        return sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path)
+        if self._is_live:
+            # WAL + synchronous=NORMAL is the fast *and* crash-safe combination
+            # for the live index: commits stop fsyncing the main file on every
+            # save. Frozen snapshot dbs are left untouched — flipping their
+            # journal mode would rewrite bytes of a content-addressed file.
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
 
     def _ensure_schema(self) -> None:
         with closing(self._connect()) as conn:
