@@ -269,7 +269,9 @@ manifest + index, never "a folder with the right name".
 
 For the design principles, module map, data model, subsystems, and the full
 roadmap, see **[ARCHITECTURE.md](ARCHITECTURE.md)**. For the original product
-vision, see **[docs/DESIGN.md](docs/DESIGN.md)**.
+vision, see **[docs/DESIGN.md](docs/DESIGN.md)**. For what consumers may rely
+on across releases (JSON envelope, manifest schema, CLI, SDK), see
+**[COMPATIBILITY.md](COMPATIBILITY.md)**.
 
 ---
 
