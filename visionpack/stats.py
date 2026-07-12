@@ -23,15 +23,14 @@ def collect_stats(project: Project) -> dict[str, Any]:
         total_assets += 1
         total_size_bytes += asset.size_bytes
         resolutions[f"{asset.width}x{asset.height}"] += 1
-        object_count = len(annotation.objects) if annotation else 0
         if annotation is None:
             images_without_annotations += 1
         else:
             total_annotations += 1
-        if object_count == 0:
+        if annotation is None or not annotation.objects:
             empty_images += 1
         else:
-            total_objects += object_count
+            total_objects += len(annotation.objects)
             class_counts.update(obj.class_id for obj in annotation.objects)
 
     return {

@@ -39,9 +39,9 @@ def join_refs(images: list[FileRef], labels: list[FileRef], match: str) -> JoinR
     matched_keys: set[str] = set()
     images_without_label = 0
     for image in images:
-        label = label_by_key.get(key(image))
-        pairs.append((image, label))
-        if label is None:
+        matched = label_by_key.get(key(image))
+        pairs.append((image, matched))
+        if matched is None:
             images_without_label += 1
         else:
             matched_keys.add(key(image))

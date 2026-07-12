@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from visionpack.storage.object_store import CopyMode, parse_copy_mode
+
 
 @dataclass(slots=True)
 class Location:
@@ -49,7 +51,7 @@ class Source:
     classes: Location | None
     match: str
     class_map: dict[str, str]
-    copy: str
+    copy: CopyMode
     credentials: dict[str, Any]
     root: Location | None
 
@@ -65,7 +67,7 @@ class Source:
             classes=Location.parse(data.get("classes")),
             match=str(match),
             class_map={str(k): str(v) for k, v in data.get("class_map", {}).items()},
-            copy=str(data.get("copy", "ingest")),
+            copy=parse_copy_mode(str(data.get("copy", "ingest"))),
             credentials=dict(data.get("credentials", {})),
             root=Location.parse(data.get("root")),
         )

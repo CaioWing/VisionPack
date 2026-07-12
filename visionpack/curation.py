@@ -36,9 +36,7 @@ def rank_for_annotation(
     for asset in project.index.assets():
         annotation = project.index.annotation_for_asset(asset.id)
         predicted = predictions.by_asset.get(asset.id, []) if predictions else []
-        has_labels = annotation is not None and bool(annotation.objects)
-
-        if not has_labels:
+        if annotation is None or not annotation.objects:
             if not predicted:
                 score, reasons = 1.0, ["unlabeled, no model predictions"]
             else:

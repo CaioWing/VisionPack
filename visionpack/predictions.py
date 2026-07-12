@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from visionpack.core.errors import FormatError
-from visionpack.core.models import BBox, ObjectAnnotation, Polygon
+from visionpack.core.models import BBox, Geometry, ObjectAnnotation, Polygon
 from visionpack.core.project import Project
 
 FORMATS = ("auto", "vp", "coco", "yolo")
@@ -158,7 +158,7 @@ def _load_vp(document: Any, refs: dict[str, str | None], resolve_class, result: 
             if class_id is None:
                 result.unknown_classes.append(str(class_ref))
                 continue
-            geometry = None
+            geometry: Geometry | None = None
             if obj.get("polygon") is not None:
                 rings = obj["polygon"]
                 if rings and not isinstance(rings[0], list):  # accept a single flat ring
@@ -207,7 +207,7 @@ def _load_coco(document: Any, refs: dict[str, str | None], resolve_class, result
             result.unknown_classes.append(str(category))
             continue
 
-        geometry = None
+        geometry: Geometry | None = None
         segmentation = record.get("segmentation")
         if isinstance(segmentation, list) and segmentation and isinstance(segmentation[0], list):
             geometry = Polygon(rings=[[float(v) for v in ring] for ring in segmentation if ring])

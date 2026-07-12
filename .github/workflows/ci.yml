@@ -20,6 +20,8 @@ jobs:
       - run: uv sync
       - name: Ruff
         run: uv run ruff check .
+      - name: Mypy
+        run: uv run mypy
 
   test:
     strategy:
@@ -35,7 +37,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync
       - name: Run tests
+        if: matrix.os != 'ubuntu-latest'
         run: uv run python -m unittest discover -s tests -q
+      # Coverage is measured (and gated by fail_under in pyproject.toml) on
+      # Linux only: the platform-specific branches make the number jitter
+      # across OSes, and one stable ratchet is what we want.
+      - name: Run tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          uv run coverage run -m unittest discover -s tests -q
+          uv run coverage report
 
   build:
     runs-on: ubuntu-latest

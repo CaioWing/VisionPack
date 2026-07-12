@@ -13,6 +13,7 @@ from visionpack.formats.classification import ImageFolderImporter
 from visionpack.formats.coco import CocoImporter
 from visionpack.formats.yolo import YoloImporter
 from visionpack.progress import cli_progress
+from visionpack.storage.object_store import parse_copy_mode
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -56,16 +57,18 @@ def _run_locked(project: Project, args: argparse.Namespace) -> int:
 
     _resolve_format(args)
 
+    copy_mode = parse_copy_mode(args.copy)
+    importer: CocoImporter | ImageFolderImporter | YoloImporter
     if args.format == "coco":
         if not args.images:
             raise VisionPackError("--images is required when importing COCO (the directory holding the image files)")
-        importer = CocoImporter(project, Path(args.source), Path(args.images), copy_mode=args.copy)
+        importer = CocoImporter(project, Path(args.source), Path(args.images), copy_mode=copy_mode)
         label = "COCO"
     elif args.format == "imagefolder":
-        importer = ImageFolderImporter(project, Path(args.source), copy_mode=args.copy)
+        importer = ImageFolderImporter(project, Path(args.source), copy_mode=copy_mode)
         label = "ImageFolder"
     else:
-        importer = YoloImporter(project, Path(args.source), copy_mode=args.copy)
+        importer = YoloImporter(project, Path(args.source), copy_mode=copy_mode)
         label = "YOLO"
 
     if args.json:

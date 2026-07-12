@@ -62,7 +62,7 @@ visionpack = "visionpack.cli.main:main"
 [dependency-groups]
 # fsspec (core only — no provider libs needed) gives the in-memory filesystem the
 # FsspecResolver tests run against, so cloud-path coverage needs no network.
-dev = ["ruff>=0.6", "fsspec>=2024.6.0"]
+dev = ["ruff>=0.6", "fsspec>=2024.6.0", "mypy>=1.11", "coverage>=7.6"]
 
 [build-system]
 requires = ["setuptools>=77", "wheel"]
@@ -80,3 +80,27 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+packages = ["visionpack"]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# fsspec and the provider filesystems ship no type stubs; they are optional
+# extras reached only behind get_resolver, so their internals stay unchecked.
+module = ["fsspec.*", "s3fs.*", "gcsfs.*", "adlfs.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["visionpack"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Ratchet, not a target: raise as coverage grows; CI fails if it regresses below this.
+fail_under = 78

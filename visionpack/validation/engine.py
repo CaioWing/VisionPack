@@ -73,8 +73,8 @@ def validate_project(project: Project, strict: bool = False) -> ValidationReport
             )
 
     for annotation in annotations:
-        asset = asset_by_id.get(annotation.asset_id)
-        if asset is None:
+        owner = asset_by_id.get(annotation.asset_id)
+        if owner is None:
             issues.append(
                 ValidationIssue(
                     "error",
@@ -90,9 +90,9 @@ def validate_project(project: Project, strict: bool = False) -> ValidationReport
                     ValidationIssue(
                         "error",
                         "class.unknown",
-                        f"Unknown class {obj.class_id} in {asset.original_path}",
-                        asset.id,
-                        asset.original_path,
+                        f"Unknown class {obj.class_id} in {owner.original_path}",
+                        owner.id,
+                        owner.original_path,
                     )
                 )
             bbox = obj.bbox
@@ -104,20 +104,20 @@ def validate_project(project: Project, strict: bool = False) -> ValidationReport
                     ValidationIssue(
                         "error",
                         "bbox.zero_area",
-                        f"Invalid bounding box area in {asset.original_path}",
-                        asset.id,
-                        asset.original_path,
+                        f"Invalid bounding box area in {owner.original_path}",
+                        owner.id,
+                        owner.original_path,
                     )
                 )
             allow_oob = project.manifest.validation.get("bbox", {}).get("allow_out_of_bounds", False)
-            if not allow_oob and (bbox.x < 0 or bbox.y < 0 or bbox.x + bbox.width > asset.width or bbox.y + bbox.height > asset.height):
+            if not allow_oob and (bbox.x < 0 or bbox.y < 0 or bbox.x + bbox.width > owner.width or bbox.y + bbox.height > owner.height):
                 issues.append(
                     ValidationIssue(
                         "error",
                         "bbox.out_of_bounds",
-                        f"Bounding box exceeds image bounds in {asset.original_path}",
-                        asset.id,
-                        asset.original_path,
+                        f"Bounding box exceeds image bounds in {owner.original_path}",
+                        owner.id,
+                        owner.original_path,
                     )
                 )
 

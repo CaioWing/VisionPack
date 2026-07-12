@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -36,7 +37,7 @@ def project_lock(root: Path) -> Iterator[None]:
 
 def _acquire(fd: int, lock_path: Path) -> None:
     try:
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
 
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
@@ -53,7 +54,7 @@ def _acquire(fd: int, lock_path: Path) -> None:
 
 def _release(fd: int) -> None:
     try:
-        if os.name == "nt":
+        if sys.platform == "win32":
             import msvcrt
 
             os.lseek(fd, 0, os.SEEK_SET)

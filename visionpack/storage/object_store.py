@@ -6,6 +6,15 @@ from pathlib import Path
 from typing import Literal
 
 CopyMode = Literal["copy", "move", "hardlink", "reference", "ingest"]
+COPY_MODES: tuple[CopyMode, ...] = ("copy", "move", "hardlink", "reference", "ingest")
+
+
+def parse_copy_mode(value: str) -> CopyMode:
+    if value not in COPY_MODES:
+        from visionpack.core.errors import VisionPackError
+
+        raise VisionPackError(f"Unknown copy mode {value!r}. Use one of: {', '.join(COPY_MODES)}.")
+    return value
 
 
 class ObjectStore:

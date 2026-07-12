@@ -65,6 +65,7 @@ from visionpack.snapshot import (
 from visionpack.split import create_split as _create_split
 from visionpack.split import get_split, lock_split
 from visionpack.stats import collect_stats, split_breakdown
+from visionpack.storage.object_store import parse_copy_mode
 from visionpack.validation import ValidationReport, validate_project
 
 __all__ = ["VisionPackClient", "init", "open"]
@@ -182,15 +183,17 @@ class VisionPackClient:
         from visionpack.formats.coco import CocoImporter
         from visionpack.formats.yolo import YoloImporter
 
+        mode = parse_copy_mode(copy_mode)
         with self._write_lock():
+            importer: CocoImporter | ImageFolderImporter | YoloImporter
             if format == "coco":
                 if images is None:
                     raise VisionPackError("import_dir(format='coco') needs images=<directory holding the image files>.")
-                importer = CocoImporter(self._project, Path(source), Path(images), copy_mode=copy_mode)
+                importer = CocoImporter(self._project, Path(source), Path(images), copy_mode=mode)
             elif format == "imagefolder":
-                importer = ImageFolderImporter(self._project, Path(source), copy_mode=copy_mode)
+                importer = ImageFolderImporter(self._project, Path(source), copy_mode=mode)
             else:
-                importer = YoloImporter(self._project, Path(source), copy_mode=copy_mode)
+                importer = YoloImporter(self._project, Path(source), copy_mode=mode)
             summary = importer.run()
         return {
             "format": format,

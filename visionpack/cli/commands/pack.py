@@ -49,13 +49,13 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     if fmt in {"tar", "tar.zst"}:
-        summary = pack_archive(project, output=output, profile_name=args.profile)
+        archive = pack_archive(project, output=output, profile_name=args.profile)
         if args.json:
-            emit_json("pack", {"profile": args.profile, **asdict(summary)})
+            emit_json("pack", {"profile": args.profile, **asdict(archive)})
             return 0
         print(
-            f"Packed archive: {summary.path} "
-            f"({summary.format}, {summary.files} files, {summary.assets} assets, {summary.size_bytes} bytes)"
+            f"Packed archive: {archive.path} "
+            f"({archive.format}, {archive.files} files, {archive.assets} assets, {archive.size_bytes} bytes)"
         )
         return 0
 
