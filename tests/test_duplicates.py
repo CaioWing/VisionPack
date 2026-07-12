@@ -101,6 +101,31 @@ class DuplicatesTest(unittest.TestCase):
         pairs = near_duplicate_pairs(phashes, threshold=5)
         self.assertEqual([(pairs[0].asset_a, pairs[0].asset_b, pairs[0].distance)], [("a", "b", 2)])
 
+    def test_huge_identical_group_expands_linearly(self) -> None:
+        # 20k frames with the same perceptual hash (idle camera) must not
+        # materialize the ~200M-pair cross product: star expansion keeps the
+        # pair list linear while the cluster still covers every member.
+        from visionpack.duplicates import cluster_pairs
+
+        phashes = {f"asset_{i:05d}": "00000000000000ff" for i in range(20_000)}
+        pairs = near_duplicate_pairs(phashes, threshold=5)
+        self.assertEqual(len(pairs), 19_999)
+        clusters = cluster_pairs(pairs)
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual(len(clusters[0].asset_ids), 20_000)
+
+    def test_huge_near_identical_groups_pair_linearly_across_values(self) -> None:
+        # Two big groups 2 bits apart: every asset must appear in at least one
+        # cross pair (so leakage stays visible) without the full cross product.
+        group_a = {f"a_{i:05d}": "00000000000000ff" for i in range(200)}
+        group_b = {f"b_{i:05d}": "00000000000000fc" for i in range(200)}
+        pairs = near_duplicate_pairs({**group_a, **group_b}, threshold=5)
+        cross = [p for p in pairs if p.distance == 2]
+        self.assertLess(len(cross), 200 * 200)
+        covered = {p.asset_a for p in cross} | {p.asset_b for p in cross}
+        self.assertTrue(set(group_a) <= covered)
+        self.assertTrue(set(group_b) <= covered)
+
     def test_phash_is_persisted_on_import(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

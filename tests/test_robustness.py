@@ -57,9 +57,9 @@ def _assert_boxes_close(test: unittest.TestCase, left: dict, right: dict) -> Non
     test.assertEqual(set(left), set(right))
     for key in left:
         test.assertEqual(len(left[key]), len(right[key]), key)
-        for (cls_a, *coords_a), (cls_b, *coords_b) in zip(left[key], right[key]):
+        for (cls_a, *coords_a), (cls_b, *coords_b) in zip(left[key], right[key], strict=True):
             test.assertEqual(cls_a, cls_b, key)
-            for value_a, value_b in zip(coords_a, coords_b):
+            for value_a, value_b in zip(coords_a, coords_b, strict=True):
                 test.assertAlmostEqual(value_a, value_b, places=3, msg=key)
 
 

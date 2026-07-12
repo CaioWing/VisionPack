@@ -15,6 +15,15 @@ from visionpack.split import asset_set_map, get_split
 # values catch crops/resizes/watermarks. Conservative by default to avoid noise.
 DEFAULT_THRESHOLD = 5
 
+# Full pairwise expansion of a duplicate group is quadratic: a dataset with
+# thousands of visually identical frames (idle camera, flat backgrounds,
+# calibration plates) would materialize hundreds of millions of pairs and run
+# out of memory. Groups up to this size expand to every pair; larger groups
+# pair each member with the group's first member instead — the connected
+# clusters are identical, every asset still appears in at least one pair (so
+# per-asset leakage stays visible), and memory stays linear.
+GROUP_EXPANSION_CAP = 50
+
 
 @dataclass(slots=True)
 class NearDuplicatePair:
@@ -86,7 +95,9 @@ def near_duplicate_pairs(phashes: dict[str, str], threshold: int = DEFAULT_THRES
     land on the same hash, and running them through the bucket loop individually
     is the pathological O(n^2) case. The LSH comparison count is therefore
     bounded by the number of *distinct* hashes, and identical-hash groups expand
-    to distance-0 pairs directly.
+    to distance-0 pairs directly. Groups larger than ``GROUP_EXPANSION_CAP`` are
+    star-expanded through their first member instead of enumerating every pair,
+    keeping memory linear on datasets full of visually identical frames.
     """
     by_value: dict[int, list[str]] = defaultdict(list)
     for asset_id, phash in phashes.items():
@@ -96,7 +107,11 @@ def near_duplicate_pairs(phashes: dict[str, str], threshold: int = DEFAULT_THRES
     for ids in by_value.values():
         if len(ids) > 1:
             ids.sort()
-            pairs.extend(NearDuplicatePair(a, b, 0) for i, a in enumerate(ids) for b in ids[i + 1 :])
+            if len(ids) <= GROUP_EXPANSION_CAP:
+                pairs.extend(NearDuplicatePair(a, b, 0) for i, a in enumerate(ids) for b in ids[i + 1 :])
+            else:
+                hub = ids[0]
+                pairs.extend(NearDuplicatePair(hub, other, 0) for other in ids[1:])
 
     bands = max(1, threshold + 1)
     buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
@@ -120,10 +135,19 @@ def near_duplicate_pairs(phashes: dict[str, str], threshold: int = DEFAULT_THRES
                 seen.add(key)
                 distance = (a_val ^ b_val).bit_count()
                 if distance <= threshold:
-                    for a_id in by_value[a_val]:
-                        for b_id in by_value[b_val]:
-                            first, second = (a_id, b_id) if a_id < b_id else (b_id, a_id)
-                            pairs.append(NearDuplicatePair(first, second, distance))
+                    ids_a, ids_b = by_value[a_val], by_value[b_val]
+                    if len(ids_a) * len(ids_b) <= GROUP_EXPANSION_CAP * GROUP_EXPANSION_CAP:
+                        expansion = [(a_id, b_id) for a_id in ids_a for b_id in ids_b]
+                    else:
+                        # Star expansion across two huge groups: every member
+                        # pairs with the other side's first member, so each
+                        # asset still shows up without the full cross product.
+                        hub_a, hub_b = ids_a[0], ids_b[0]
+                        expansion = [(a_id, hub_b) for a_id in ids_a]
+                        expansion += [(hub_a, b_id) for b_id in ids_b if b_id != hub_b]
+                    for a_id, b_id in expansion:
+                        first, second = (a_id, b_id) if a_id < b_id else (b_id, a_id)
+                        pairs.append(NearDuplicatePair(first, second, distance))
     pairs.sort(key=lambda pair: (pair.distance, pair.asset_a, pair.asset_b))
     return pairs
 
