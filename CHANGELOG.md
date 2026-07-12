@@ -4,6 +4,34 @@ All notable changes to VisionPack are tracked here.
 
 ## [Unreleased]
 
+- Compatibility policy (`COMPATIBILITY.md`): the stable surfaces — JSON
+  envelope, manifest schema, CLI, SDK public API — and the semver/deprecation
+  rules that govern them, guarded by contract tests
+  (`tests/test_compatibility.py` pins the SDK surface and schema versions).
+- Versioned manifest schema: `visionpack.yaml`'s `version` is now an explicit
+  schema version with an in-memory migration chain, so manifests from older
+  releases keep opening and manifests from newer releases fail with an
+  actionable "upgrade visionpack" error instead of misparsing.
+- Fixed an out-of-memory crash in near-duplicate detection: a dataset with
+  thousands of visually identical frames (one perceptual-hash group) used to
+  expand to the full quadratic pair list (~200M pairs / ~16GB at 20k images)
+  and get OOM-killed. Duplicate groups beyond a size cap are now star-expanded
+  — same clusters, every asset still visible in leakage checks, linear memory
+  (same run: ~20s, ~1.3GB).
+- Scale benchmark (`scripts/benchmark.py`): generates a synthetic YOLO dataset
+  and times import/validate/split/snapshot/stats/export through the SDK, so
+  throughput regressions and memory blowups surface before release.
+- Type-checked codebase: mypy runs in CI next to ruff; all pre-existing type
+  errors fixed, including a validated `CopyMode` so invalid `copy:` values
+  fail fast with a clear message.
+- Coverage is measured in CI with a regression gate (`fail_under` ratchet).
+- Robustness tests: YOLO↔COCO round-trips preserve classes and boxes;
+  malformed COCO/YOLO labels and truncated images degrade into per-file
+  failures or clean `FormatError`s; packed archives contain only relative,
+  traversal-free paths.
+- Cross-platform release script: `scripts/prepare_release.py` replaces the
+  PowerShell-only `prepare-release.ps1` (same flags: `--skip-checks`,
+  `--no-commit`, `--no-tag`, `--dry-run`).
 - Distribution drift between snapshots (`vp diff v1 v2 --drift`, SDK
   `ds.drift("v1", "v2")`): per-class object counts and distribution-share
   deltas (biggest movers first) plus smoothed KL and Jensen–Shannon divergence,
@@ -85,8 +113,8 @@ All notable changes to VisionPack are tracked here.
 
 ## [0.0.1] - 2026-06-15
 
-- No changes documented.
-
-## [0.1.0] - 2026-06-04
-
-- Initial PyPI-ready package metadata, CLI entry points, build workflow, and release publishing workflow.
+- First PyPI release: package metadata, CLI entry points, build workflow, and
+  release publishing workflow. (An earlier internal changelog entry dated
+  2026-06-04 used the number 0.1.0 before versioning was reset to 0.0.1 for
+  the actual PyPI debut; that number was never published and is reclaimed by
+  the next release.)

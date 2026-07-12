@@ -9,7 +9,7 @@ leak-free, ready-to-train dataset.
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
-![Tests](https://img.shields.io/badge/tests-143%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-201%20passing-brightgreen)
 
 [Documentation](https://caiowing.github.io/VisionPack/) ·
 [Install](https://caiowing.github.io/VisionPack/installation/) ·
@@ -282,8 +282,9 @@ multi-source ingestion (local and cloud) → validation → deterministic splits
 snapshots → ready-to-train export/packing → evaluation (`vp eval`) and
 model-in-the-loop labeling (`vp autolabel` / `vp queue`) — works end-to-end
 across classification, detection, instance/semantic segmentation, and keypoints,
-with 143 passing tests. APIs may still shift; feedback and contributions are
-welcome.
+with 201 passing tests (typed, mypy-checked, coverage-gated CI). The surfaces
+consumers build on are governed by [COMPATIBILITY.md](COMPATIBILITY.md);
+feedback and contributions are welcome.
 
 ```bash
 uv run python -m unittest discover -s tests -q

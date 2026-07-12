@@ -211,6 +211,18 @@ with a self-describing `dataset.json`.
 - **Progress.** Long operations (import/sync/export) render a rich progress bar
   via a callback (`progress.py`), but only on an interactive terminal — piped/CI
   runs stay quiet. The core stays UI-free; the callback is optional.
+- **Bounded near-duplicate memory.** Duplicate groups beyond
+  `GROUP_EXPANSION_CAP` are star-expanded instead of enumerating every pair, so
+  a dataset of thousands of visually identical frames stays linear in memory
+  (the full cross product OOM-killed at 20k images) while clusters and
+  per-asset leakage visibility are preserved.
+- **Versioned manifest schema.** `visionpack.yaml`'s `version` is the manifest
+  schema version (`MANIFEST_VERSION`); older manifests are migrated in memory
+  by a registered chain, newer ones rejected with an "upgrade visionpack"
+  error. Compatibility guarantees live in `COMPATIBILITY.md`.
+- **Scale benchmark.** `scripts/benchmark.py` times the whole pipeline over a
+  synthetic dataset (e.g. `--images 20000`) through the SDK; used to catch
+  throughput regressions and memory blowups before release.
 
 ## Testing
 
@@ -222,7 +234,13 @@ uv run python -m unittest discover -s tests -q
 
 Coverage spans the YOLO/COCO/classification flows, the geometry model, media
 probing, manifest validation, snapshots, deterministic splits, near-duplicate /
-leakage detection, multi-source sync, and training packs.
+leakage detection, multi-source sync, and training packs — plus format
+round-trips, hostile/corrupt input, archive path safety
+(`tests/test_robustness.py`) and the stable-surface contract
+(`tests/test_json_contract.py`, `tests/test_compatibility.py`).
+
+CI runs ruff, mypy, the suite on Linux/Windows across Python 3.11-3.13, and a
+coverage gate (`fail_under` ratchet in `pyproject.toml`).
 
 ---
 
@@ -297,7 +315,22 @@ The roadmap is sequenced so each phase unblocks the next.
       driving VisionPack from services/UIs/CI; errors are structured too
 - [ ] HTML validation / stats / drift reports
 - [ ] richer terminal output with `rich`
-- [ ] move CLI plumbing from `argparse` to `typer` once commands stabilize
+- [ ] move CLI plumbing from `argparse` to `typer` — deferred by decision: the
+      argparse surface is the tested, documented contract being stabilized for
+      0.1.0, and typer changes help/error text for no user-visible gain;
+      revisit if/when the CLI needs typer-only features
+
+### Production readiness (0.1.0) ✅
+- [x] mypy type-checking in CI (codebase fully clean)
+- [x] coverage measured in CI with a `fail_under` regression ratchet
+- [x] robustness tests: format round-trips, corrupt/hostile input, archive
+      path safety
+- [x] scale benchmark (`scripts/benchmark.py`); fixed the quadratic
+      near-duplicate pair expansion it uncovered (OOM at 20k identical frames)
+- [x] compatibility policy (`COMPATIBILITY.md`) + contract tests pinning the
+      SDK surface and schema versions
+- [x] versioned manifest schema with an in-memory migration chain
+- [x] cross-platform release script (`scripts/prepare_release.py`)
 
 ### Model-in-the-loop ✅ (first slice)
 - [x] `vp autolabel` — persist confident predictions as annotations
