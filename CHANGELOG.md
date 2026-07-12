@@ -4,6 +4,10 @@ All notable changes to VisionPack are tracked here.
 
 ## [Unreleased]
 
+- Nothing yet.
+
+## [0.2.0] - 2026-07-12
+
 - Distribution drift between snapshots (`vp diff v1 v2 --drift`, SDK
   `ds.drift("v1", "v2")`): per-class object counts and distribution-share
   deltas (biggest movers first) plus smoothed KL and Jensen–Shannon divergence,
