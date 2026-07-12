@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,43 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from visionpack.core.errors import ManifestError
 from visionpack.core.models import ClassDef
+
+# The manifest schema version this VisionPack reads and writes. Bumped only on
+# a breaking change to the visionpack.yaml schema; older manifests are upgraded
+# in memory by the migration chain below, newer ones are rejected with a clear
+# "upgrade visionpack" error instead of misparsing.
+MANIFEST_VERSION = 1
+
+# version N -> the function that upgrades a manifest dict from N to N+1.
+# from_dict applies these in sequence until the dict reaches MANIFEST_VERSION,
+# so a released migration must never be edited — add the next step instead.
+_MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+
+
+def migrate_manifest_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Upgrade a raw manifest mapping to ``MANIFEST_VERSION`` (pre-validation)."""
+    raw_version = data.get("version", MANIFEST_VERSION)
+    try:
+        version = int(raw_version)
+    except (TypeError, ValueError) as exc:
+        raise ManifestError(f"visionpack.yaml has a non-integer version: {raw_version!r}") from exc
+    if version > MANIFEST_VERSION:
+        raise ManifestError(
+            f"visionpack.yaml uses manifest version {version}, but this VisionPack "
+            f"understands up to {MANIFEST_VERSION}. Upgrade visionpack "
+            "(pip install -U visionpack) to open this project."
+        )
+    while version < MANIFEST_VERSION:
+        migration = _MIGRATIONS.get(version)
+        if migration is None:
+            raise ManifestError(
+                f"visionpack.yaml uses manifest version {version} and no migration "
+                f"to version {version + 1} is available."
+            )
+        data = migration(dict(data))
+        version += 1
+        data["version"] = version
+    return data
 
 
 class _ClassDefModel(BaseModel):
@@ -71,7 +109,7 @@ class _ManifestModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    version: int = 1
+    version: int = MANIFEST_VERSION
     task: str = "detection"
     classes: list[_ClassDefModel] = Field(default_factory=list)
     sources: list[_SourceModel] = Field(default_factory=list)
@@ -89,7 +127,7 @@ class _ManifestModel(BaseModel):
 @dataclass(slots=True)
 class Manifest:
     name: str
-    version: int = 1
+    version: int = MANIFEST_VERSION
     task: str = "detection"
     classes: list[ClassDef] = field(default_factory=list)
     sources: list[dict[str, Any]] = field(default_factory=list)
@@ -131,6 +169,7 @@ class Manifest:
         # empty section (e.g. ``classes:`` with no value) falls back to its
         # default instead of failing type validation.
         cleaned = {key: value for key, value in data.items() if value is not None}
+        cleaned = migrate_manifest_data(cleaned)
         try:
             model = _ManifestModel.model_validate(cleaned)
         except ValidationError as exc:
