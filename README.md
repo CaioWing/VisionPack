@@ -240,8 +240,8 @@ Full command reference and per-command options live in the
 Releases are prepared locally, reviewed as a GitHub Release draft, and published
 to PyPI only when the GitHub Release is published.
 
-```powershell
-.\scripts\prepare-release.ps1 0.1.1
+```bash
+uv run python scripts/prepare_release.py 0.1.1
 git push origin HEAD
 git push origin v0.1.1
 gh release create v0.1.1 --draft --title "v0.1.1" --notes-file CHANGELOG.md
@@ -251,11 +251,11 @@ Review the draft release notes in GitHub. Publishing the release triggers
 `.github/workflows/publish.yml`, which builds the package, validates the
 artifacts with `twine check`, and publishes to PyPI through Trusted Publishing.
 
-Use `-NoCommit -NoTag` to update files and run the checks without creating the
-release commit or tag:
+Use `--no-commit --no-tag` to update files and run the checks without creating
+the release commit or tag, and `--dry-run` to preview the plan:
 
-```powershell
-.\scripts\prepare-release.ps1 0.1.1 -NoCommit -NoTag
+```bash
+uv run python scripts/prepare_release.py 0.1.1 --no-commit --no-tag
 ```
 
 ---
